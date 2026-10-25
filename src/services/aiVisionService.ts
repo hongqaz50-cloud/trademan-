@@ -117,17 +117,7 @@ export async function scanAPWithAI(
 
   const ai = new GoogleGenAI({ apiKey: key });
 
-  const prompt = `Bạn là trợ lý AI chuyên trích xuất dữ liệu game từ ảnh chụp màn hình.
-Nhiệm vụ: Tìm 4 loại bình năng lượng (AP Potion) có dung dịch màu xanh lá cây và trích xuất SỐ LƯỢNG của từng loại bình:
-- Bình 50 AP: số lượng hiển thị ở đáy bình có nhãn 50
-- Bình 100 AP: số lượng hiển thị ở đáy bình có nhãn 100
-- Bình 500 AP: số lượng hiển thị ở đáy bình có nhãn 500
-- Bình 1.000 AP: số lượng hiển thị ở đáy bình có nhãn 1.000 (hoặc 1000)
-
-Lưu ý quan trọng:
-- Bỏ qua các vật phẩm khác như chìa khóa, đồng xu, trượng, sách.
-- Trả về dạng số nguyên (ví dụ nếu hiển thị '1.762' thì giá trị là 1762, '3.116' là 3116).
-- Nếu không tìm thấy loại bình nào thì điền 0 cho bình đó.`;
+  const prompt = `Trích xuất số lượng của 4 loại bình AP màu xanh lá cây trong game Rise of Kingdoms (ROK): ap50, ap100, ap500, ap1000.`;
 
   const response = await ai.models.generateContent({
     model,
@@ -146,15 +136,29 @@ Lưu ý quan trọng:
       },
     ],
     config: {
+      systemInstruction: `Bạn là trợ lý AI chuyên nhận diện vật phẩm trong game Rise of Kingdoms (ROK).
+Quy tắc nhận dạng bình hồi phục AP (Action Point / Điểm Hành Động):
+1. ĐẶC ĐIỂM BÌNH AP: Là bình thủy tinh chứa DUNG DỊCH MÀU XANH LÁ CÂY (green potion liquid), miệng bình thắt dây đỏ có gắn thẻ cam.
+2. 4 LOẠI BÌNH AP (nhãn số ghi ở MẶT TRÊN của mỗi ô vật phẩm):
+   - 50 AP: Nhãn trên ghi '50' (thẻ viền vàng nền xanh lá)
+   - 100 AP: Nhãn trên ghi '100' (thẻ viền vàng nền xanh lá)
+   - 500 AP: Nhãn trên ghi '500' (thẻ viền vàng nền xanh lam)
+   - 1000 AP: Nhãn trên ghi '1.000' hoặc '1000' (thẻ viền vàng nền tím)
+3. SỐ LƯỢNG SỞ HỮU: Là con số hiển thị ở GÓC DƯỚI CÙNG của từng bình AP đó.
+   - Dấu chấm '.' là dấu phân cách hàng nghìn trong game ROK (ví dụ '1.762' -> 1762, '3.116' -> 3116, '1.065' -> 1065, '38' -> 38, '10' -> 10). Bỏ dấu chấm và trả về số nguyên sạch.
+4. BỎ QUA TẤT CẢ VẬT PHẨM KHÁC TRONG TÚI ĐỒ:
+   - Bỏ qua chìa khóa vàng, chìa khóa bạc, đồng xu vàng có hình chìa khóa, huy hiệu di chuyển, sách bìa đỏ (2024, 2025, 2026), trượng, rương, v.v.
+   - CHỈ TẬP TRUNG VÀO CÁC Ô CÓ HÌNH BÌNH NƯỚC XANH LÁ CÂY.
+5. VỊ TRÍ: Bình AP có thể nằm rải rác ở bất kỳ hàng nào (hàng trên, hàng dưới, các cột khác nhau) trong kho túi đồ. Quét toàn bộ ảnh. Nếu loại bình nào không có trong ảnh thì điền 0.`,
       maxOutputTokens: 64,
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          ap50: { type: Type.INTEGER, description: 'Số lượng bình 50 AP' },
-          ap100: { type: Type.INTEGER, description: 'Số lượng bình 100 AP' },
-          ap500: { type: Type.INTEGER, description: 'Số lượng bình 500 AP' },
-          ap1000: { type: Type.INTEGER, description: 'Số lượng bình 1000 AP' },
+          ap50: { type: Type.INTEGER, description: 'Số lượng bình 50 AP (dung dịch xanh lá, nhãn trên 50)' },
+          ap100: { type: Type.INTEGER, description: 'Số lượng bình 100 AP (dung dịch xanh lá, nhãn trên 100)' },
+          ap500: { type: Type.INTEGER, description: 'Số lượng bình 500 AP (dung dịch xanh lá, nhãn trên 500)' },
+          ap1000: { type: Type.INTEGER, description: 'Số lượng bình 1000 AP (dung dịch xanh lá, nhãn trên 1.000)' },
         },
         required: ['ap50', 'ap100', 'ap500', 'ap1000'],
       },
@@ -201,12 +205,7 @@ export async function scanHonorWithAI(
 
   const ai = new GoogleGenAI({ apiKey: key });
 
-  const prompt = `Bạn là trợ lý AI chuyên trích xuất dữ liệu từ ảnh chụp màn hình "Bảng Danh Dự" trong game.
-Nhiệm vụ: Tìm và trích xuất điểm Danh Dự (Honor points) của người chơi trong ảnh.
-- Điểm Danh Dự thường là số chia hết cho 10 (ví dụ 810, 11040, 25000...).
-- Bỏ qua số thứ hạng (rank) ở đầu dòng.
-- Bỏ qua mã máy chủ Server ID bắt đầu bằng ký tự # (ví dụ #2563).
-- Trả về đúng con số điểm danh dự dạng số nguyên.`;
+  const prompt = `Trích xuất điểm Danh Dự (Honor points) của người chơi trong màn hình Bảng Danh Dự game Rise of Kingdoms (ROK).`;
 
   const response = await ai.models.generateContent({
     model,
@@ -225,6 +224,13 @@ Nhiệm vụ: Tìm và trích xuất điểm Danh Dự (Honor points) của ngư
       },
     ],
     config: {
+      systemInstruction: `Bạn là trợ lý AI chuyên trích xuất dữ liệu từ game Rise of Kingdoms (ROK).
+Trong ảnh chụp màn hình 'Bảng Danh Dự' (Honor Roll / Honor Ranking):
+- Tìm và trích xuất điểm Danh Dự (Honor points) của người chơi.
+- Điểm Danh Dự thường là số nguyên lớn (ví dụ 810, 11040, 25000...).
+- Bỏ qua số thứ hạng Rank (1, 2, 3...) ở cột bên trái.
+- Bỏ qua ID máy chủ dạng #XXXX (ví dụ #2563).
+- Bỏ dấu chấm phân cách hàng nghìn và trả về số nguyên sạch.`,
       maxOutputTokens: 32,
       responseMimeType: 'application/json',
       responseSchema: {
