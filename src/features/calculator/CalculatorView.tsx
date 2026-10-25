@@ -181,7 +181,13 @@ export function CalculatorView() {
           {/* Right: Results */}
           <div>
             {result
-              ? <ResultsPanel result={result} />
+              ? (
+                <ResultsPanel
+                  result={result}
+                  apSpent={parseFloat(formValues.apSpent) || 0}
+                  honorGained={parseFloat(formValues.honorGained) || 0}
+                />
+              )
               : <EmptyResultsPlaceholder />
             }
           </div>
@@ -197,7 +203,13 @@ export function CalculatorView() {
           {/* Right: Results (shown live if previous calc exists) */}
           <div>
             {result
-              ? <ResultsPanel result={result} />
+              ? (
+                <ResultsPanel
+                  result={result}
+                  apSpent={parseFloat(formValues.apSpent) || 0}
+                  honorGained={parseFloat(formValues.honorGained) || 0}
+                />
+              )
               : <EmptyResultsPlaceholder fromScan />
             }
           </div>
