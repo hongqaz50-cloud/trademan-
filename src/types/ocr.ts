@@ -14,6 +14,17 @@ export interface APPotionPair {
   quantity: number;   // how many the player has
 }
 
+/** Detected word bounding box from OCR for spatial analysis */
+export interface DetectedWord {
+  text: string;
+  confidence: number;
+  origX: number;
+  origY: number;
+  origW: number;
+  origH: number;
+  isPotion?: boolean;
+}
+
 /** Result from scanning an AP potion screen */
 export interface APScanResult {
   potions: APPotionPair[];

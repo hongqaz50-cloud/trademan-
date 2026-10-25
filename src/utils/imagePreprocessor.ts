@@ -1,53 +1,88 @@
 /**
  * imagePreprocessor.ts — Canvas-based image preprocessing for OCR accuracy.
  *
- * Strategy: "White text isolation"
- * ─────────────────────────────────
- * AP quantity numbers (4.045, 4.542, 191, 95) appear as WHITE text on a DARK banner.
- * Honor values (810, 11.040) appear as WHITE text on a DARK golden banner.
+ * Strategy: "White text isolation" + "Potion liquid spatial detector"
+ * ──────────────────────────────────────────────────────────────────
+ * AP quantity numbers appear as WHITE text on a DARK banner.
+ * Honor values appear as WHITE text on a DARK golden banner.
  *
- * Algorithm:
- *  1. Scale up 4× with nearest-neighbor (keeps text edges sharp)
- *  2. For each pixel:
- *     - If ALL channels > WHITE_THRESHOLD → this is white/bright text → set to BLACK (0,0,0)
- *     - Otherwise → game art / background → set to WHITE (255,255,255)
- *  3. Result: black text on white background = optimal for Tesseract
- *
- * Why not just grayscale + contrast?
- * Game icons have colorful art (green, orange, red) that creates noise after
- * grayscale conversion. Isolating only white pixels avoids this problem.
+ * Preprocessing pipeline:
+ *  1. Extract raw image pixel data to detect green potion liquid.
+ *  2. Scale up 4× with nearest-neighbor (sharp text edges).
+ *  3. Isolate white/bright text against a clean white background.
  */
 
 /** Scale factor — larger = better Tesseract accuracy (needs text ≥ 20px) */
-const SCALE_FACTOR = 4;
+export const OCR_SCALE_FACTOR = 4;
 
 /**
  * Minimum channel value (0–255) to be considered "white/bright text".
- * Set conservatively to 200 so we don't catch yellowish or greenish game UI.
  * Only pure white and near-white pixels (like UI text) will match.
  */
 const WHITE_THRESHOLD = 200;
 
-/**
- * Preprocesses an image Blob for better Tesseract OCR accuracy.
- *
- * Isolates bright/white text against a clean white background
- * to maximize contrast for Tesseract's character recognition.
- *
- * @param source — Input image as a Blob (PNG, JPG, WebP)
- * @returns Preprocessed PNG blob suitable for Tesseract
- */
-export async function preprocessForOCR(source: Blob): Promise<Blob> {
-  // ── Step 1: Decode the image ──────────────────────────────────────────────
-  const bitmap = await createImageBitmap(source);
+export interface PreprocessResult {
+  blob: Blob;
+  rawImageData: ImageData;
+  scaleFactor: number;
+}
 
-  // ── Step 2: Scale up with nearest-neighbor (no blurring of text edges) ───
+/**
+ * Checks for bright green potion liquid in the region directly above a detected number.
+ * Returns the count of green potion pixels.
+ */
+export function countGreenPixelsAbove(
+  imageData: ImageData,
+  centerX: number,
+  bottomY: number
+): number {
+  const { width, height, data } = imageData;
+  // Region above the number where the green potion bottle sits
+  const yTop = Math.max(0, Math.floor(bottomY - 75));
+  const yBot = Math.min(height, Math.floor(bottomY));
+  const xLeft = Math.max(0, Math.floor(centerX - 35));
+  const xRight = Math.min(width, Math.floor(centerX + 45));
+
+  let greenCount = 0;
+  for (let py = yTop; py < yBot; py++) {
+    for (let px = xLeft; px < xRight; px++) {
+      const idx = (py * width + px) * 4;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+      // Bright green potion liquid: high green channel relative to red and blue
+      if (g > 115 && g > r * 1.25 && g > b * 1.25) {
+        greenCount++;
+      }
+    }
+  }
+  return greenCount;
+}
+
+/**
+ * Preprocesses an image Blob for better Tesseract OCR accuracy
+ * and extracts raw image data for item classification.
+ */
+export async function preprocessForOCR(source: Blob): Promise<PreprocessResult> {
+  const bitmap = await createImageBitmap(source);
+  const origWidth = bitmap.width;
+  const origHeight = bitmap.height;
+
+  // ── Step 1: Capture raw pixels from original image ────────────────────────
+  const rawCanvas = document.createElement('canvas');
+  rawCanvas.width = origWidth;
+  rawCanvas.height = origHeight;
+  const rawCtx = rawCanvas.getContext('2d')!;
+  rawCtx.drawImage(bitmap, 0, 0);
+  const rawImageData = rawCtx.getImageData(0, 0, origWidth, origHeight);
+
+  // ── Step 2: Scale up with nearest-neighbor for OCR ────────────────────────
   const canvas = document.createElement('canvas');
-  canvas.width = bitmap.width * SCALE_FACTOR;
-  canvas.height = bitmap.height * SCALE_FACTOR;
+  canvas.width = origWidth * OCR_SCALE_FACTOR;
+  canvas.height = origHeight * OCR_SCALE_FACTOR;
 
   const ctx = canvas.getContext('2d')!;
-  ctx.imageSmoothingEnabled = false; // nearest-neighbor → sharp pixel edges
+  ctx.imageSmoothingEnabled = false;
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
 
@@ -59,28 +94,28 @@ export async function preprocessForOCR(source: Blob): Promise<Blob> {
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
-
-    // A pixel is "white text" only if ALL three channels are above the threshold.
-    // This avoids matching bright-green, bright-yellow, or bright-orange game art.
     const isWhiteText = r > WHITE_THRESHOLD && g > WHITE_THRESHOLD && b > WHITE_THRESHOLD;
-
-    // White text → black (makes it visible on white background for Tesseract)
-    // Everything else → white (clean background)
     const val = isWhiteText ? 0 : 255;
 
     data[i] = val;
     data[i + 1] = val;
     data[i + 2] = val;
-    data[i + 3] = 255; // fully opaque
+    data[i + 3] = 255;
   }
 
   ctx.putImageData(imageData, 0, 0);
 
-  // ── Step 4: Export as PNG blob ────────────────────────────────────────────
-  return new Promise<Blob>((resolve, reject) => {
+  // ── Step 4: Export scaled image as PNG blob ───────────────────────────────
+  const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error('canvas.toBlob returned null'))),
+      (b) => (b ? resolve(b) : reject(new Error('canvas.toBlob returned null'))),
       'image/png'
     );
   });
+
+  return {
+    blob,
+    rawImageData,
+    scaleFactor: OCR_SCALE_FACTOR,
+  };
 }

@@ -159,7 +159,7 @@ export function useImageScanner(
 
       try {
         // 3. Run OCR
-        const { text } = await extractTextFromImage(file, (progress) => {
+        const { text, words } = await extractTextFromImage(file, (progress) => {
           updateStep(step, { scanProgress: progress });
         });
 
@@ -168,7 +168,7 @@ export function useImageScanner(
         let honorResult: HonorScanResult | undefined;
 
         if (step === 'apBefore' || step === 'apAfter') {
-          apResult = parseAPScreen(text);
+          apResult = parseAPScreen(text, words);
         } else {
           honorResult = parseHonorScreen(text);
         }

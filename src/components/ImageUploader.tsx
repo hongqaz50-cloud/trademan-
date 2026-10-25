@@ -13,7 +13,7 @@
  * then renders the wizard UI. Receives only onScanComplete callback from parent.
  */
 
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useImageScanner, SCAN_STEP_ORDER } from '@/hooks/useImageScanner';
 import type { ScanStep, APPotionPair, APScanResult, StepScanState } from '@/types/ocr';
 
@@ -258,6 +258,16 @@ function APQuantityEditor({
     });
     return init;
   });
+
+  useEffect(() => {
+    const next: Record<number, string> = { 50: '', 100: '', 500: '', 1000: '' };
+    initialPotions.forEach((p) => {
+      if (KNOWN_AP_COSTS.includes(p.cost as typeof KNOWN_AP_COSTS[number])) {
+        next[p.cost] = p.quantity > 0 ? String(p.quantity) : '';
+      }
+    });
+    setQuantities(next);
+  }, [initialPotions]);
 
   const parsePotions = (qtys: Record<number, string>) =>
     KNOWN_AP_COSTS.map((cost) => ({

@@ -1,29 +1,31 @@
 /**
- * ocrService.ts — Tesseract.js integration layer.
+ * ocrService.ts — Tesseract.js integration layer with spatial item detection.
  *
- * Key improvements for game UI screenshots:
- * - Preprocesses images (3× scale + contrast) before sending to Tesseract
- * - Uses character whitelist (digits + dot only) → fewer misreads
- * - Uses PSM 11 (Sparse Text) → finds numbers anywhere in the image
- * - Returns raw OCR text alongside confidence for debugging
+ * Pipeline:
+ *   raw image → preprocess (4× scale + white text isolation + raw pixel cache)
+ *             → Tesseract PSM 11 + digit whitelist
+ *             → Spatial item detection (identifies green potion bottles)
+ *             → structured OCRResult
  */
 
 import * as Tesseract from 'tesseract.js';
-import { preprocessForOCR } from '@/utils/imagePreprocessor';
-
+import {
+  preprocessForOCR,
+  countGreenPixelsAbove,
+  OCR_SCALE_FACTOR,
+} from '@/utils/imagePreprocessor';
+import type { DetectedWord } from '@/types/ocr';
 
 export type ProgressCallback = (progress: number) => void;
 
 export interface OCRResult {
   text: string;
-  confidence: number; // 0–100, Tesseract's confidence score
+  confidence: number;
+  words?: DetectedWord[];
 }
 
 /**
  * Extracts text from an image using Tesseract.js (English OCR).
- *
- * Pipeline:
- *   raw image → preprocess (3× + grayscale + contrast) → Tesseract → raw text
  *
  * @param source     — File, Blob, or image URL
  * @param onProgress — Optional callback receiving progress 0–100
@@ -34,31 +36,30 @@ export async function extractTextFromImage(
 ): Promise<OCRResult> {
   onProgress?.(0);
 
-  // ── Step 1: Preprocess (only for Blob/File, not URLs) ────────────────────
   let processedSource: Blob | string = source instanceof Blob ? source : source;
+  let rawImageData: ImageData | undefined;
 
   if (source instanceof Blob) {
     try {
       onProgress?.(3);
-      processedSource = await preprocessForOCR(source);
+      const pre = await preprocessForOCR(source);
+      processedSource = pre.blob;
+      rawImageData = pre.rawImageData;
       onProgress?.(8);
     } catch {
-      // If preprocessing fails, fall back to original
       processedSource = source;
     }
   }
 
-  // ── Step 2: Create Tesseract worker ──────────────────────────────────────
   const worker = await Tesseract.createWorker('eng', 1, {
     logger: (m: { status: string; progress: number }) => {
       if (!onProgress) return;
       switch (m.status) {
-        case 'loading tesseract core':     onProgress(10); break;
-        case 'initializing tesseract':     onProgress(14); break;
+        case 'loading tesseract core':       onProgress(10); break;
+        case 'initializing tesseract':       onProgress(14); break;
         case 'loading language traineddata': onProgress(18); break;
-        case 'initializing api':           onProgress(22); break;
+        case 'initializing api':             onProgress(22); break;
         case 'recognizing text':
-          // Maps recognition progress from 22% → 95%
           onProgress(22 + Math.round(m.progress * 73));
           break;
         default: break;
@@ -66,28 +67,55 @@ export async function extractTextFromImage(
     },
   });
 
-  // ── Step 3: Configure parameters ─────────────────────────────────────────
   await worker.setParameters({
-    // Only recognize digits and dots — dramatically reduces misreads on game UI
     tessedit_char_whitelist: '0123456789.',
-    // PSM 11 = Sparse Text: find as much text as possible in no particular order
-    // Best for game UIs where numbers are scattered across the image
     tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT,
   });
 
-  // ── Step 4: Recognize ─────────────────────────────────────────────────────
-  // processedSource is always a Blob here (preprocessForOCR returns Blob,
-  // and the fallback also keeps it as a Blob). Use a type guard to satisfy TS.
   const blob = processedSource instanceof Blob ? processedSource : null;
   const imageUrl = blob ? URL.createObjectURL(blob) : (processedSource as string);
 
   try {
-    const result = await worker.recognize(imageUrl);
+    const result = await worker.recognize(imageUrl, {}, { blocks: true });
     onProgress?.(100);
+
+    const words: DetectedWord[] = [];
+    for (const b of result.data.blocks || []) {
+      for (const p of b.paragraphs || []) {
+        for (const l of p.lines || []) {
+          for (const w of l.words || []) {
+            const origX = Math.round((w.bbox.x0 + w.bbox.x1) / (2 * OCR_SCALE_FACTOR));
+            const origY = Math.round((w.bbox.y0 + w.bbox.y1) / (2 * OCR_SCALE_FACTOR));
+            const origW = Math.round((w.bbox.x1 - w.bbox.x0) / OCR_SCALE_FACTOR);
+            const origH = Math.round((w.bbox.y1 - w.bbox.y0) / OCR_SCALE_FACTOR);
+
+            let isPotion = false;
+            if (rawImageData) {
+              const greenCount = countGreenPixelsAbove(rawImageData, origX, origY);
+              // Potion bottles have bright green liquid (typically > 300 pixels)
+              if (greenCount >= 100) {
+                isPotion = true;
+              }
+            }
+
+            words.push({
+              text: w.text,
+              confidence: w.confidence,
+              origX,
+              origY,
+              origW,
+              origH,
+              isPotion,
+            });
+          }
+        }
+      }
+    }
 
     return {
       text: result.data.text,
       confidence: result.data.confidence,
+      words,
     };
   } finally {
     if (blob) URL.revokeObjectURL(imageUrl);
