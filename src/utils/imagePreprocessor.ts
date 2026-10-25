@@ -17,9 +17,9 @@ export const OCR_SCALE_FACTOR = 4;
 
 /**
  * Minimum channel value (0–255) to be considered "white/bright text".
- * Only pure white and near-white pixels (like UI text) will match.
+ * Set to 175 to capture white text even with compression or dimming.
  */
-const WHITE_THRESHOLD = 200;
+const WHITE_THRESHOLD = 175;
 
 export interface PreprocessResult {
   blob: Blob;
@@ -38,9 +38,9 @@ export function countGreenPixelsAbove(
 ): number {
   const { width, height, data } = imageData;
   // Region above the number where the green potion bottle sits
-  const yTop = Math.max(0, Math.floor(bottomY - 75));
+  const yTop = Math.max(0, Math.floor(bottomY - 80));
   const yBot = Math.min(height, Math.floor(bottomY));
-  const xLeft = Math.max(0, Math.floor(centerX - 35));
+  const xLeft = Math.max(0, Math.floor(centerX - 40));
   const xRight = Math.min(width, Math.floor(centerX + 45));
 
   let greenCount = 0;
@@ -51,7 +51,7 @@ export function countGreenPixelsAbove(
       const g = data[idx + 1];
       const b = data[idx + 2];
       // Bright green potion liquid: high green channel relative to red and blue
-      if (g > 115 && g > r * 1.25 && g > b * 1.25) {
+      if (g > 100 && g > r * 1.15 && g > b * 1.15) {
         greenCount++;
       }
     }

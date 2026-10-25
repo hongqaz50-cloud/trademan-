@@ -92,8 +92,8 @@ export async function extractTextFromImage(
             let isPotion = false;
             if (rawImageData) {
               const greenCount = countGreenPixelsAbove(rawImageData, origX, origY);
-              // Potion bottles have bright green liquid (typically > 300 pixels)
-              if (greenCount >= 100) {
+              // Potion bottles have bright green liquid
+              if (greenCount >= 40) {
                 isPotion = true;
               }
             }

@@ -2,18 +2,17 @@
  * ocrParser.ts — Pure functions to extract game values from raw OCR text and detected items.
  *
  * Game format:
- * ─ Thousands separator: "." (Vietnamese/European) → "1.000" = 1000, "1.065" = 1065
- * ─ AP potion screen has 4 potion tiers:
- *     50 AP | 100 AP | 500 AP | 1.000 AP
+ * ─ Thousands separator: "." (Vietnamese/European) → "1.000" = 1000, "1.065" = 1065, "1.762" = 1762
+ * ─ AP potion screen has 4 potion tiers in fixed order:
+ *     1: 50 AP | 2: 100 AP | 3: 500 AP | 4: 1.000 AP
  * ─ Honor screen:
  *     "Bảng Danh Dự" header
  *     "[rank]  [name]  #[serverID]  [honor]"
- *     e.g. "342  [63DS] Thanos  #2563  810"
  */
 
 import type { APPotionPair, APScanResult, HonorScanResult, DetectedWord } from '@/types/ocr';
 
-/** AP costs that exist in-game */
+/** AP costs that exist in-game in fixed natural order */
 export const KNOWN_AP_COSTS = [50, 100, 500, 1000] as const;
 
 // ─── OCR text normalisation ───────────────────────────────────────────────────
@@ -36,7 +35,7 @@ export function cleanOCRText(raw: string): string {
 
 /**
  * Parses a game number string.
- * Handles Vietnamese dot-thousands: "1.000"→1000, "1.065"→1065, "3.122"→3122.
+ * Handles Vietnamese dot-thousands: "1.000"→1000, "1.065"→1065, "3.122"→3122, "1.762"→1762.
  */
 export function parseGameNumber(raw: string): number {
   const cleaned = raw.trim().replace(/\s/g, '');
@@ -70,83 +69,104 @@ export function extractAllNumbers(text: string): number[] {
 /**
  * Parses an AP potion selection screen.
  *
- * Employs a multi-tier fallback:
- * 1. Spatial green potion liquid matching (identifies exact potions from inventory)
- * 2. Cost-and-quantity pairing (if cost labels are in text)
- * 3. 4-number sequence
- * 4. General number mapping
+ * Principles:
+ * 1. The 4 AP potions always correspond to [50, 100, 500, 1000] in that fixed order.
+ * 2. In full inventory screens, green potion bottles isolate AP potions from other items.
+ * 3. In cropped potion screens, the quantities from left-to-right map directly to [50, 100, 500, 1000].
+ * 4. Never shift quantities based on partial cost detection.
  */
 export function parseAPScreen(rawText: string, words?: DetectedWord[]): APScanResult {
-  // ── Strategy 1: Green potion bottle detection (spatial matching) ────────────
+  // ── Strategy 1: Spatial & Word Detection ────────────────────────────────────
   if (words && words.length > 0) {
-    const potionWords = words.filter((w) => w.isPotion);
-    if (potionWords.length > 0) {
-      // Sort reading order: row by row (tolerance 55px), then left to right
+    // Filter to valid number words
+    const validWords = words.filter((w) => {
+      const num = parseGameNumber(w.text);
+      return !isNaN(num) && num >= 0 && w.text !== '.';
+    });
+
+    // Potion words identified by green bottle liquid above the number
+    const potionWords = validWords.filter((w) => w.isPotion);
+
+    // If 2 or more potion words were detected:
+    if (potionWords.length >= 2) {
       potionWords.sort((a, b) => {
-        const rowA = Math.floor(a.origY / 55);
-        const rowB = Math.floor(b.origY / 55);
+        const rowA = Math.floor(a.origY / 50);
+        const rowB = Math.floor(b.origY / 50);
         if (rowA !== rowB) return rowA - rowB;
         return a.origX - b.origX;
       });
 
-      const potions: APPotionPair[] = KNOWN_AP_COSTS.map((cost, idx) => {
-        const word = potionWords[idx];
-        const qty = word ? parseGameNumber(word.text) : 0;
-        return {
-          cost,
-          quantity: isNaN(qty) || qty < 0 ? 0 : qty,
-        };
-      });
+      const potions: APPotionPair[] = KNOWN_AP_COSTS.map((cost, idx) => ({
+        cost,
+        quantity: potionWords[idx] ? parseGameNumber(potionWords[idx].text) || 0 : 0,
+      }));
 
-      const totalAP = potions.reduce((sum, p) => sum + p.cost * p.quantity, 0);
-      if (totalAP > 0) {
-        return { potions, totalAP };
-      }
+      return {
+        potions,
+        totalAP: potions.reduce((s, p) => s + p.cost * p.quantity, 0),
+      };
     }
-  }
 
-  // ── Strategy 2: Costs and quantities pairing ─────────────────────────────────
-  const allNumbers = extractAllNumbers(rawText);
-  const costsSet = new Set<number>(KNOWN_AP_COSTS);
-  const foundCosts: number[] = [];
-  const foundQuantities: number[] = [];
-
-  for (const num of allNumbers) {
-    if (costsSet.has(num)) {
-      foundCosts.push(num);
-    } else if (num > 0) {
-      foundQuantities.push(num);
-    }
-  }
-
-  if (foundCosts.length > 0) {
-    const potions: APPotionPair[] = KNOWN_AP_COSTS.map((cost) => {
-      const idx = foundCosts.indexOf(cost);
-      const qty = idx !== -1 ? (foundQuantities[idx] ?? 0) : 0;
-      return { cost, quantity: qty };
+    // If all valid words can be sorted in reading order:
+    validWords.sort((a, b) => {
+      const rowA = Math.floor(a.origY / 50);
+      const rowB = Math.floor(b.origY / 50);
+      if (rowA !== rowB) return rowA - rowB;
+      return a.origX - b.origX;
     });
-    const totalAP = potions.reduce((sum, p) => sum + p.cost * p.quantity, 0);
-    return { potions, totalAP };
+
+    // If exactly 4 numbers exist in the crop: map directly to [50, 100, 500, 1000]
+    if (validWords.length === 4) {
+      const potions: APPotionPair[] = KNOWN_AP_COSTS.map((cost, idx) => ({
+        cost,
+        quantity: parseGameNumber(validWords[idx].text) || 0,
+      }));
+
+      return {
+        potions,
+        totalAP: potions.reduce((s, p) => s + p.cost * p.quantity, 0),
+      };
+    }
   }
 
-  // ── Strategy 3: Exactly 4 numbers found in OCR text ─────────────────────────
+  // ── Strategy 2: Raw Numbers Sequence ─────────────────────────────────────────
+  const allNumbers = extractAllNumbers(rawText);
+
+  // If exactly 4 numbers exist: direct 1-to-1 mapping
   if (allNumbers.length === 4) {
-    const potions: APPotionPair[] = KNOWN_AP_COSTS.map((cost, i) => ({
+    const potions: APPotionPair[] = KNOWN_AP_COSTS.map((cost, idx) => ({
       cost,
-      quantity: allNumbers[i] ?? 0,
+      quantity: allNumbers[idx] ?? 0,
     }));
-    const totalAP = potions.reduce((sum, p) => sum + p.cost * p.quantity, 0);
-    return { potions, totalAP };
+    return {
+      potions,
+      totalAP: potions.reduce((s, p) => s + p.cost * p.quantity, 0),
+    };
   }
 
-  // ── Strategy 4: Fallback - populate available numbers into slots ────────────
-  if (allNumbers.length > 0) {
-    const potions: APPotionPair[] = KNOWN_AP_COSTS.map((cost, i) => ({
+  // If 8 numbers exist (4 labels + 4 quantities): the bottom 4 are quantities
+  if (allNumbers.length === 8) {
+    const quantities = allNumbers.slice(4);
+    const potions: APPotionPair[] = KNOWN_AP_COSTS.map((cost, idx) => ({
       cost,
-      quantity: allNumbers[i] ?? 0,
+      quantity: quantities[idx] ?? 0,
     }));
-    const totalAP = potions.reduce((sum, p) => sum + p.cost * p.quantity, 0);
-    return { potions, totalAP };
+    return {
+      potions,
+      totalAP: potions.reduce((s, p) => s + p.cost * p.quantity, 0),
+    };
+  }
+
+  // Fallback: fill whatever numbers exist into slots [50, 100, 500, 1000]
+  if (allNumbers.length > 0) {
+    const potions: APPotionPair[] = KNOWN_AP_COSTS.map((cost, idx) => ({
+      cost,
+      quantity: allNumbers[idx] ?? 0,
+    }));
+    return {
+      potions,
+      totalAP: potions.reduce((s, p) => s + p.cost * p.quantity, 0),
+    };
   }
 
   return {
