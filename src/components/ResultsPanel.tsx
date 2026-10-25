@@ -15,9 +15,10 @@ interface ResultsPanelProps {
   result: CalculationResult;
   apSpent?: number;
   honorGained?: number;
+  playerName?: string;
 }
 
-export function ResultsPanel({ result, apSpent, honorGained }: ResultsPanelProps) {
+export function ResultsPanel({ result, apSpent, honorGained, playerName }: ResultsPanelProps) {
   const [showReportModal, setShowReportModal] = useState(false);
   const { totalMonsters, totalRuns, monstersPerRun, efficiencyRate } = result;
 
@@ -110,6 +111,7 @@ export function ResultsPanel({ result, apSpent, honorGained }: ResultsPanelProps
         onClose={() => setShowReportModal(false)}
         apSpent={effectiveApSpent}
         honorGained={effectiveHonorGained}
+        scannedAccount={playerName}
       />
     </div>
   );

@@ -105,6 +105,7 @@ function GameRulesCard() {
 
 export function CalculatorView() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('manual');
+  const [scannedPlayerName, setScannedPlayerName] = useState<string>('');
 
   const {
     formValues,
@@ -122,8 +123,9 @@ export function CalculatorView() {
    * Injects values into the calculator and switches to manual tab to show results.
    */
   const handleScanComplete = useCallback(
-    (apSpent: number, honorGained: number) => {
+    (apSpent: number, honorGained: number, playerName?: string) => {
       injectValues(apSpent, honorGained);
+      if (playerName) setScannedPlayerName(playerName);
       setActiveTab('manual');
     },
     [injectValues]
@@ -186,6 +188,7 @@ export function CalculatorView() {
                   result={result}
                   apSpent={parseFloat(formValues.apSpent) || 0}
                   honorGained={parseFloat(formValues.honorGained) || 0}
+                  playerName={scannedPlayerName}
                 />
               )
               : <EmptyResultsPlaceholder />
@@ -208,6 +211,7 @@ export function CalculatorView() {
                   result={result}
                   apSpent={parseFloat(formValues.apSpent) || 0}
                   honorGained={parseFloat(formValues.honorGained) || 0}
+                  playerName={scannedPlayerName}
                 />
               )
               : <EmptyResultsPlaceholder fromScan />

@@ -6,7 +6,7 @@
  */
 
 import { GoogleGenAI, Type } from '@google/genai';
-import type { APScanResult, HonorScanResult } from '@/types/ocr';
+import type { APScanResult, HonorScanResult, SpeedupScanResult } from '@/types/ocr';
 
 export const AI_STORAGE_KEY = 'trademan_gemini_api_key';
 export const AI_MODEL_KEY = 'trademan_gemini_model';
@@ -230,15 +230,15 @@ export async function scanHonorWithAI(
 
   const ai = new GoogleGenAI({ apiKey: key });
 
-  const prompt = `Trích xuất điểm Danh Dự (Honor points) của người chơi trong màn hình Bảng Danh Dự game Rise of Kingdoms (ROK).`;
+  const prompt = `Trích xuất tên người chơi (Account name) và điểm Danh Dự (Honor points) trong màn hình Bảng Danh Dự game Rise of Kingdoms (ROK).`;
 
   const configObj: Record<string, unknown> = {
     systemInstruction: `Bạn là trợ lý AI chuyên trích xuất dữ liệu từ game Rise of Kingdoms (ROK).
 Trong ảnh chụp màn hình 'Bảng Danh Dự' (Honor Roll / Honor Ranking):
-- Tìm và trích xuất điểm Danh Dự (Honor points) của người chơi.
-- Điểm Danh Dự thường là số nguyên lớn (ví dụ 810, 11040, 25000...).
-- Bỏ qua số thứ hạng Rank (1, 2, 3...) ở cột bên trái.
-- Bỏ qua ID máy chủ dạng #XXXX (ví dụ #2563).
+- Tìm và trích xuất:
+  1. Tên người chơi (Player / Account Name): ví dụ '[LOST] Loki' hoặc 'Loki'. Bỏ qua số thứ hạng Rank đầu dòng.
+  2. Điểm Danh Dự (Honor points): số nguyên lớn (ví dụ 30012, 35004...).
+- Bỏ qua ID máy chủ dạng #XXXX (ví dụ #1903).
 - Bỏ dấu chấm phân cách hàng nghìn và trả về số nguyên sạch.`,
     maxOutputTokens: 256,
     responseMimeType: 'application/json',
@@ -246,6 +246,7 @@ Trong ảnh chụp màn hình 'Bảng Danh Dự' (Honor Roll / Honor Ranking):
       type: Type.OBJECT,
       properties: {
         honorValue: { type: Type.INTEGER, description: 'Điểm Danh Dự kiếm được' },
+        playerName: { type: Type.STRING, description: 'Tên người chơi trong bảng danh dự, ví dụ [LOST] Loki' },
       },
       required: ['honorValue'],
     },
@@ -287,11 +288,155 @@ Trong ảnh chụp màn hình 'Bảng Danh Dự' (Honor Roll / Honor Ranking):
   }
   const parsed = JSON.parse(rawJson);
   const honorValue = Number.isFinite(parsed.honorValue) ? Math.max(0, parsed.honorValue) : 0;
+  const playerName = typeof parsed.playerName === 'string' && parsed.playerName.trim()
+    ? parsed.playerName.trim()
+    : undefined;
 
   return {
     honorValue,
+    playerName,
     confidence: 'high',
   };
+}
+
+/**
+ * Scans a Speedup inventory screen ("TÀI NGUYÊN & TĂNG TỐC") using Gemini AI.
+ * Extracts days, hours, minutes for Universal, Training, and Healing speedups.
+ */
+export async function scanSpeedupWithAI(
+  file: File | Blob,
+  apiKey?: string,
+  modelName?: string
+): Promise<SpeedupScanResult> {
+  const key = (apiKey || getStoredApiKey()).trim();
+  if (!key) {
+    throw new Error('Chưa cấu hình Gemini API Key. Vui lòng nhập API Key để sử dụng tính năng quét bằng AI.');
+  }
+
+  const model = modelName || getStoredModel();
+  const base64Data = await fileToBase64(file);
+  const mimeType = (file as File).type || 'image/png';
+
+  const ai = new GoogleGenAI({ apiKey: key });
+
+  const prompt = `Trích xuất thời gian tăng tốc từ màn hình 'TÀI NGUYÊN & TĂNG TỐC' trong game Rise of Kingdoms (ROK):
+1. Tăng tốc chung (Universal Speedup): dòng 'Tăng tốc' ở cuối danh sách (ví dụ '3.177 ngày 18 giờ 32 phút')
+2. Tăng tốc huấn luyện (Training Speedup): dòng 'Tăng tốc huấn luyện' (ví dụ '833 ngày 19 giờ 20 phút')
+3. Tăng tốc chữa lành (Healing Speedup): dòng 'Tăng tốc chữa lành' (ví dụ '284 ngày 23 giờ 35 phút')`;
+
+  const configObj: Record<string, unknown> = {
+    systemInstruction: `Bạn là trợ lý AI chuyên trích xuất dữ liệu tăng tốc game Rise of Kingdoms (ROK).
+Nhiệm vụ: Trích xuất chính xác số ngày (days), số giờ (hours), số phút (minutes) của từng loại tăng tốc:
+- 'Tăng tốc' ở hàng cuối cùng chính là Universal Speedup (tăng tốc chung). Dấu chấm là phân cách hàng nghìn (ví dụ 3.177 ngày -> 3177).
+- 'Tăng tốc huấn luyện' là Training Speedup.
+- 'Tăng tốc chữa lành' là Healing Speedup.
+Trả về số nguyên sạch cho mỗi đơn vị ngày, giờ, phút. Nếu không thấy thì để 0.`,
+    maxOutputTokens: 512,
+    responseMimeType: 'application/json',
+    responseSchema: {
+      type: Type.OBJECT,
+      properties: {
+        universalDays: { type: Type.INTEGER, description: 'Số ngày của Tăng tốc (dòng cuối)' },
+        universalHours: { type: Type.INTEGER, description: 'Số giờ của Tăng tốc' },
+        universalMinutes: { type: Type.INTEGER, description: 'Số phút của Tăng tốc' },
+        trainingDays: { type: Type.INTEGER, description: 'Số ngày của Tăng tốc huấn luyện' },
+        trainingHours: { type: Type.INTEGER, description: 'Số giờ của Tăng tốc huấn luyện' },
+        trainingMinutes: { type: Type.INTEGER, description: 'Số phút của Tăng tốc huấn luyện' },
+        healingDays: { type: Type.INTEGER, description: 'Số ngày của Tăng tốc chữa lành' },
+        healingHours: { type: Type.INTEGER, description: 'Số giờ của Tăng tốc chữa lành' },
+        healingMinutes: { type: Type.INTEGER, description: 'Số phút của Tăng tốc chữa lành' },
+      },
+      required: [
+        'universalDays', 'universalHours', 'universalMinutes',
+        'trainingDays', 'trainingHours', 'trainingMinutes',
+        'healingDays', 'healingHours', 'healingMinutes',
+      ],
+    },
+  };
+
+  const contents = [
+    {
+      inlineData: {
+        mimeType,
+        data: base64Data,
+      },
+    },
+    prompt,
+  ];
+
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model,
+      contents,
+      config: {
+        ...configObj,
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
+      },
+    });
+  } catch {
+    response = await ai.models.generateContent({
+      model,
+      contents,
+      config: configObj,
+    });
+  }
+
+  let rawJson = (response.text || '{}').trim();
+  if (rawJson.startsWith('```')) {
+    rawJson = rawJson.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  }
+  const parsed = JSON.parse(rawJson);
+
+  const uD = Math.max(0, Number(parsed.universalDays) || 0);
+  const uH = Math.max(0, Number(parsed.universalHours) || 0);
+  const uM = Math.max(0, Number(parsed.universalMinutes) || 0);
+
+  const tD = Math.max(0, Number(parsed.trainingDays) || 0);
+  const tH = Math.max(0, Number(parsed.trainingHours) || 0);
+  const tM = Math.max(0, Number(parsed.trainingMinutes) || 0);
+
+  const hD = Math.max(0, Number(parsed.healingDays) || 0);
+  const hH = Math.max(0, Number(parsed.healingHours) || 0);
+  const hM = Math.max(0, Number(parsed.healingMinutes) || 0);
+
+  return {
+    universal: {
+      days: uD,
+      hours: uH,
+      minutes: uM,
+      totalMinutes: uD * 1440 + uH * 60 + uM,
+      rawStr: `${uD}d ${uH}h ${uM}m`,
+    },
+    training: {
+      days: tD,
+      hours: tH,
+      minutes: tM,
+      totalMinutes: tD * 1440 + tH * 60 + tM,
+      rawStr: `${tD}d ${tH}h ${tM}m`,
+    },
+    healing: {
+      days: hD,
+      hours: hH,
+      minutes: hM,
+      totalMinutes: hD * 1440 + hH * 60 + hM,
+      rawStr: `${hD}d ${hH}h ${hM}m`,
+    },
+  };
+}
+
+/**
+ * Calculates the difference between two speedup scans and formats it as +Xd Yh Zm
+ */
+export function formatSpeedupDelta(deltaMinutes: number): string {
+  const sign = deltaMinutes >= 0 ? '+' : '-';
+  const absMin = Math.abs(deltaMinutes);
+  const d = Math.floor(absMin / 1440);
+  const h = Math.floor((absMin % 1440) / 60);
+  const m = absMin % 60;
+  return `${sign}${d}d ${h.toString().padStart(2, '0')}h ${m.toString().padStart(2, '0')}m`;
 }
 
 /**

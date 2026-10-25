@@ -11,9 +11,19 @@
  *   Training speed: +16d 20h 30m
  *   Healing speed: +5d 11h 45m
  *   Note: 5 marches
+ *
+ * Capabilities:
+ * - Ô Account: tự động lấy từ tên trong ảnh Bảng Danh Dự (playerName) hoặc tự sửa
+ * - Hours: tự nhập số giờ hoặc tính từ Time, ngày tháng tự gợi ý
+ * - Universal speed, Training speed, Healing speed: tự động tính khi tải lên 2 ảnh Tăng Tốc (Trước/Sau)
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import {
+  scanSpeedupWithAI,
+  formatSpeedupDelta,
+} from '@/services/aiVisionService';
+import type { SpeedupScanResult } from '@/types/ocr';
 
 const STORAGE_ACCOUNT = 'trademan_pilot_account';
 const STORAGE_PILOT = 'trademan_pilot_name';
@@ -24,6 +34,7 @@ interface PilotReportModalProps {
   onClose: () => void;
   apSpent: number;
   honorGained: number;
+  scannedAccount?: string;
 }
 
 export function PilotReportModal({
@@ -31,28 +42,99 @@ export function PilotReportModal({
   onClose,
   apSpent,
   honorGained,
+  scannedAccount,
 }: PilotReportModalProps) {
-  // Form fields
-  const [account, setAccount] = useState(() => localStorage.getItem(STORAGE_ACCOUNT) || 'ThatMofoKyle(Loki)');
+  // Account field: prioritize scannedAccount if available, else localStorage
+  const [account, setAccount] = useState(() => {
+    return scannedAccount || localStorage.getItem(STORAGE_ACCOUNT) || 'ThatMofoKyle(Loki)';
+  });
+
+  useEffect(() => {
+    if (scannedAccount) {
+      setAccount(scannedAccount);
+    }
+  }, [scannedAccount]);
+
+  // Pilot field (persisted)
   const [pilot, setPilot] = useState(() => localStorage.getItem(STORAGE_PILOT) || 'Hunter');
-  
+
+  // Time & Hours fields
   const defaultTime = useMemo(() => {
     const now = new Date();
     const d = now.getDate().toString().padStart(2, '0');
     const m = (now.getMonth() + 1).toString().padStart(2, '0');
-    return `${d}/${m}, 08:00 - 18:00`;
+    return `${d}/${m}, 08:30 - 18:50`;
   }, []);
 
   const [time, setTime] = useState(defaultTime);
-  const [hours, setHours] = useState('10,0');
+  const [hours, setHours] = useState('10,3');
+
+  // Speedups fields (can be edited manually OR auto-calculated from photos)
   const [universalSpeed, setUniversalSpeed] = useState('+2d 09h 00m');
   const [trainingSpeed, setTrainingSpeed] = useState('+4d 19h 25m');
   const [healingSpeed, setHealingSpeed] = useState('+2d 00h 10m');
   const [note, setNote] = useState(() => localStorage.getItem(STORAGE_NOTE) || '5 marches');
 
+  // Speedup photo upload state
+  const [speedupBeforeData, setSpeedupBeforeData] = useState<SpeedupScanResult | null>(null);
+  const [speedupAfterData, setSpeedupAfterData] = useState<SpeedupScanResult | null>(null);
+  const [beforePreviewUrl, setBeforePreviewUrl] = useState<string | null>(null);
+  const [afterPreviewUrl, setAfterPreviewUrl] = useState<string | null>(null);
+  const [isScanningBefore, setIsScanningBefore] = useState(false);
+  const [isScanningAfter, setIsScanningAfter] = useState(false);
+  const [speedupScanError, setSpeedupScanError] = useState<string | null>(null);
+
+  const beforeInputRef = useRef<HTMLInputElement>(null);
+  const afterInputRef = useRef<HTMLInputElement>(null);
+
   const [copied, setCopied] = useState(false);
 
-  // Generate formatted text
+  // Auto-recalculate speedup deltas whenever beforeData or afterData updates
+  useEffect(() => {
+    if (speedupBeforeData && speedupAfterData) {
+      const deltaUni = speedupAfterData.universal.totalMinutes - speedupBeforeData.universal.totalMinutes;
+      const deltaTrain = speedupAfterData.training.totalMinutes - speedupBeforeData.training.totalMinutes;
+      const deltaHeal = speedupAfterData.healing.totalMinutes - speedupBeforeData.healing.totalMinutes;
+
+      setUniversalSpeed(formatSpeedupDelta(deltaUni));
+      setTrainingSpeed(formatSpeedupDelta(deltaTrain));
+      setHealingSpeed(formatSpeedupDelta(deltaHeal));
+    }
+  }, [speedupBeforeData, speedupAfterData]);
+
+  // Handler for scanning Before speedup photo
+  const handleBeforeFile = async (file: File) => {
+    setSpeedupScanError(null);
+    setIsScanningBefore(true);
+    setBeforePreviewUrl(URL.createObjectURL(file));
+    try {
+      const data = await scanSpeedupWithAI(file);
+      setSpeedupBeforeData(data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSpeedupScanError(`Lỗi quét ảnh Tăng Tốc Trước: ${msg}`);
+    } finally {
+      setIsScanningBefore(false);
+    }
+  };
+
+  // Handler for scanning After speedup photo
+  const handleAfterFile = async (file: File) => {
+    setSpeedupScanError(null);
+    setIsScanningAfter(true);
+    setAfterPreviewUrl(URL.createObjectURL(file));
+    try {
+      const data = await scanSpeedupWithAI(file);
+      setSpeedupAfterData(data);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSpeedupScanError(`Lỗi quét ảnh Tăng Tốc Sau: ${msg}`);
+    } finally {
+      setIsScanningAfter(false);
+    }
+  };
+
+  // Generate formatted text matching user's requested specification
   const reportText = useMemo(() => {
     return [
       `Account: ${account.trim() || '—'}`,
@@ -80,7 +162,6 @@ export function PilotReportModal({
       localStorage.setItem(STORAGE_NOTE, note);
       setTimeout(() => setCopied(false), 3000);
     } catch {
-      // Fallback if clipboard API is blocked
       const ta = document.createElement('textarea');
       ta.value = reportText;
       document.body.appendChild(ta);
@@ -118,11 +199,140 @@ export function PilotReportModal({
           </button>
         </div>
 
-        {/* Inputs Grid */}
+        {/* ── Auto-Calculate Speedups via Photo Upload ── */}
+        <div className="p-3.5 bg-black/30 border border-game-border/70 rounded-xl space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-base">📸</span>
+              <div>
+                <span className="text-xs font-bold text-white">
+                  Tự Động Tính Tăng Tốc (Universal, Training, Healing) Bằng Ảnh
+                </span>
+                <p className="text-[11px] text-gray-400">
+                  Kéo thả hoặc click chọn 2 ảnh 'TÀI NGUYÊN & TĂNG TỐC' Trước và Sau khi cày
+                </p>
+              </div>
+            </div>
+            {speedupBeforeData && speedupAfterData && (
+              <span className="text-xs font-bold text-game-success bg-game-success/15 px-2 py-0.5 rounded-full border border-game-success/30 flex items-center gap-1">
+                ✓ Đã tự động tính xong
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Before Speedup dropzone */}
+            <div
+              onClick={() => !isScanningBefore && beforeInputRef.current?.click()}
+              className={`p-3 rounded-xl border border-dashed cursor-pointer transition-all flex items-center gap-3 ${
+                beforePreviewUrl
+                  ? 'bg-game-accent/10 border-game-accent/50'
+                  : 'bg-black/20 border-game-border hover:border-gray-500'
+              }`}
+            >
+              {beforePreviewUrl ? (
+                <img
+                  src={beforePreviewUrl}
+                  alt="Tăng tốc trước"
+                  className="w-12 h-12 object-cover rounded-lg border border-game-border"
+                />
+              ) : (
+                <div className="w-12 h-12 rounded-lg bg-black/40 flex items-center justify-center text-xl">
+                  📷
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-bold text-white truncate">
+                  {isScanningBefore
+                    ? '⏳ Đang quét AI...'
+                    : speedupBeforeData
+                    ? '✓ Tăng Tốc Trước (Đã đọc)'
+                    : 'Thêm ảnh Tăng Tốc TRƯỚC'}
+                </div>
+                <div className="text-[11px] text-gray-400 truncate">
+                  {speedupBeforeData
+                    ? `Uni: ${speedupBeforeData.universal.rawStr}`
+                    : 'Click để chọn hoặc dán ảnh'}
+                </div>
+              </div>
+              <input
+                ref={beforeInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleBeforeFile(file);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+
+            {/* After Speedup dropzone */}
+            <div
+              onClick={() => !isScanningAfter && afterInputRef.current?.click()}
+              className={`p-3 rounded-xl border border-dashed cursor-pointer transition-all flex items-center gap-3 ${
+                afterPreviewUrl
+                  ? 'bg-game-accent/10 border-game-accent/50'
+                  : 'bg-black/20 border-game-border hover:border-gray-500'
+              }`}
+            >
+              {afterPreviewUrl ? (
+                <img
+                  src={afterPreviewUrl}
+                  alt="Tăng tốc sau"
+                  className="w-12 h-12 object-cover rounded-lg border border-game-border"
+                />
+              ) : (
+                <div className="w-12 h-12 rounded-lg bg-black/40 flex items-center justify-center text-xl">
+                  📷
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-bold text-white truncate">
+                  {isScanningAfter
+                    ? '⏳ Đang quét AI...'
+                    : speedupAfterData
+                    ? '✓ Tăng Tốc Sau (Đã đọc)'
+                    : 'Thêm ảnh Tăng Tốc SAU'}
+                </div>
+                <div className="text-[11px] text-gray-400 truncate">
+                  {speedupAfterData
+                    ? `Uni: ${speedupAfterData.universal.rawStr}`
+                    : 'Click để chọn hoặc dán ảnh'}
+                </div>
+              </div>
+              <input
+                ref={afterInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleAfterFile(file);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+          </div>
+
+          {speedupScanError && (
+            <p className="text-xs text-red-400 font-mono mt-1">{speedupScanError}</p>
+          )}
+        </div>
+
+        {/* ── Main Inputs Grid ── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
-          {/* Account */}
+          {/* Account (Auto from Honor board or custom edit) */}
           <div>
-            <label className="block text-gray-400 mb-1 font-semibold">Tên Account (Khách hàng)</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-gray-400 font-semibold">Tên Account (Lấy từ Bảng Danh Dự)</label>
+              {scannedAccount && (
+                <span className="text-[10px] text-game-accent bg-game-accent/20 px-1.5 py-0.5 rounded font-mono">
+                  Auto: {scannedAccount}
+                </span>
+              )}
+            </div>
             <input
               type="text"
               value={account}
@@ -132,9 +342,9 @@ export function PilotReportModal({
             />
           </div>
 
-          {/* Pilot */}
+          {/* Pilot (Self-entered) */}
           <div>
-            <label className="block text-gray-400 mb-1 font-semibold">Tên Pilot (Tự điền)</label>
+            <label className="block text-gray-400 mb-1 font-semibold">Tên Pilot (Tự điền · Tự lưu)</label>
             <input
               type="text"
               value={pilot}
@@ -146,7 +356,7 @@ export function PilotReportModal({
 
           {/* Time */}
           <div>
-            <label className="block text-gray-400 mb-1 font-semibold">Thời gian (Time)</label>
+            <label className="block text-gray-400 mb-1 font-semibold">Ngày tháng ca cày (Time)</label>
             <input
               type="text"
               value={time}
@@ -158,7 +368,7 @@ export function PilotReportModal({
 
           {/* Hours */}
           <div>
-            <label className="block text-gray-400 mb-1 font-semibold">Số giờ cày (Hours)</label>
+            <label className="block text-gray-400 mb-1 font-semibold">Số giờ cày (Hours · Tự thêm)</label>
             <input
               type="text"
               value={hours}
@@ -190,9 +400,14 @@ export function PilotReportModal({
             />
           </div>
 
-          {/* Universal speed */}
+          {/* Universal speed (Auto from photos or manual) */}
           <div>
-            <label className="block text-gray-400 mb-1 font-semibold">⏱️ Universal speed (Tăng tốc chung)</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-gray-400 font-semibold">⏱️ Universal speed (Tăng tốc chung)</label>
+              {speedupBeforeData && speedupAfterData && (
+                <span className="text-[10px] text-game-success font-mono font-semibold">Tự tính từ ảnh</span>
+              )}
+            </div>
             <input
               type="text"
               value={universalSpeed}
@@ -202,9 +417,14 @@ export function PilotReportModal({
             />
           </div>
 
-          {/* Training speed */}
+          {/* Training speed (Auto from photos or manual) */}
           <div>
-            <label className="block text-gray-400 mb-1 font-semibold">🏹 Training speed (Tăng tốc lính)</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-gray-400 font-semibold">🏹 Training speed (Tăng tốc lính)</label>
+              {speedupBeforeData && speedupAfterData && (
+                <span className="text-[10px] text-game-success font-mono font-semibold">Tự tính từ ảnh</span>
+              )}
+            </div>
             <input
               type="text"
               value={trainingSpeed}
@@ -214,9 +434,14 @@ export function PilotReportModal({
             />
           </div>
 
-          {/* Healing speed */}
+          {/* Healing speed (Auto from photos or manual) */}
           <div>
-            <label className="block text-gray-400 mb-1 font-semibold">🩹 Healing speed (Tăng tốc viện)</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-gray-400 font-semibold">🩹 Healing speed (Tăng tốc viện)</label>
+              {speedupBeforeData && speedupAfterData && (
+                <span className="text-[10px] text-game-success font-mono font-semibold">Tự tính từ ảnh</span>
+              )}
+            </div>
             <input
               type="text"
               value={healingSpeed}
@@ -239,7 +464,7 @@ export function PilotReportModal({
           </div>
         </div>
 
-        {/* Live Preview Box */}
+        {/* ── Live Preview Box ── */}
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-300">Bản xem trước báo cáo (Live Preview):</span>
@@ -252,7 +477,7 @@ export function PilotReportModal({
           </div>
         </div>
 
-        {/* Footer Actions */}
+        {/* ── Footer Actions ── */}
         <div className="flex items-center justify-between border-t border-game-border/60 pt-4">
           <button
             type="button"

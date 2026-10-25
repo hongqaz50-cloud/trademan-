@@ -539,7 +539,7 @@ function ConfirmationPanel({
 // ─── Main ImageUploader Component ─────────────────────────────────────────────
 
 interface ImageUploaderProps {
-  onScanComplete: (apSpent: number, honorGained: number) => void;
+  onScanComplete: (apSpent: number, honorGained: number, playerName?: string) => void;
 }
 
 export function ImageUploader({ onScanComplete }: ImageUploaderProps) {

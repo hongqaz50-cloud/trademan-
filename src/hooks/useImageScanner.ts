@@ -80,8 +80,10 @@ function mergeAggregated(
     next.apAfterPotions = apResult.potions;
   } else if (step === 'honorBefore' && honorResult) {
     next.honorBefore = honorResult.honorValue;
+    if (honorResult.playerName) next.playerName = honorResult.playerName;
   } else if (step === 'honorAfter' && honorResult) {
     next.honorAfter = honorResult.honorValue;
+    if (honorResult.playerName) next.playerName = honorResult.playerName;
   }
 
   // Recompute derived values
@@ -119,7 +121,7 @@ export interface UseImageScannerReturn {
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useImageScanner(
-  onScanComplete: (apSpent: number, honorGained: number) => void
+  onScanComplete: (apSpent: number, honorGained: number, playerName?: string) => void
 ): UseImageScannerReturn {
   const [currentStep, setCurrentStep] = useState<ScanStep>('apBefore');
   const [stepStates, setStepStates] = useState<Record<ScanStep, StepScanState>>(
@@ -305,9 +307,9 @@ export function useImageScanner(
 
   const handleConfirm = useCallback(
     (apSpent: number, honorGained: number) => {
-      onScanComplete(apSpent, honorGained);
+      onScanComplete(apSpent, honorGained, aggregated.playerName);
     },
-    [onScanComplete]
+    [onScanComplete, aggregated.playerName]
   );
 
   /**

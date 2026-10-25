@@ -34,7 +34,26 @@ export interface APScanResult {
 /** Result from scanning an Honor board screen */
 export interface HonorScanResult {
   honorValue: number;
+  playerName?: string;
   confidence: ScanConfidence;
+}
+
+/** Speedup data for single category */
+export interface SpeedupItemData {
+  days: number;
+  hours: number;
+  minutes: number;
+  totalMinutes: number;
+  rawStr?: string;
+}
+
+/** Complete speedup extraction result from a speedup inventory screen */
+export interface SpeedupScanResult {
+  universal: SpeedupItemData;
+  training: SpeedupItemData;
+  healing: SpeedupItemData;
+  building?: SpeedupItemData;
+  research?: SpeedupItemData;
 }
 
 /** Per-step scan state stored in useImageScanner */
@@ -59,6 +78,7 @@ export interface AggregatedScanResult {
   honorBefore: number | null;
   honorAfter: number | null;
   honorGained: number | null;      // honorAfter - honorBefore
+  playerName?: string;
   apBeforePotions: APPotionPair[];
   apAfterPotions: APPotionPair[];
 }
