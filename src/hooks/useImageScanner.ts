@@ -168,7 +168,7 @@ export function useImageScanner(
 
       if (useAI) {
         try {
-          updateStep(step, { scanProgress: 45 });
+          updateStep(step, { scanProgress: 45, aiError: null });
           let apResult: APScanResult | undefined;
           let honorResult: HonorScanResult | undefined;
 
@@ -183,6 +183,7 @@ export function useImageScanner(
             scanProgress: 100,
             isDone: true,
             scanMethod: 'ai',
+            aiError: null,
             rawOCRText: JSON.stringify(apResult || honorResult, null, 2),
             apResult,
             honorResult,
@@ -190,8 +191,10 @@ export function useImageScanner(
 
           setAggregated((prev) => mergeAggregated(prev, step, apResult, honorResult));
           return;
-        } catch (aiErr) {
-          console.warn('AI scanning failed, falling back to offline OCR:', aiErr);
+        } catch (aiErr: unknown) {
+          const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
+          console.warn('AI scanning failed, falling back to offline OCR:', errMsg);
+          updateStep(step, { aiError: errMsg });
           // If AI fails, proceed to offline Tesseract OCR fallback below
         }
       }

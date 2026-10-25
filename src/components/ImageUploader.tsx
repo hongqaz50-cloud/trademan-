@@ -675,6 +675,28 @@ export function ImageUploader({ onScanComplete }: ImageUploaderProps) {
                 </div>
               </div>
 
+              {/* AI Error notice if AI was attempted but failed */}
+              {currentState.aiError && (
+                <div className="p-3 bg-red-950/40 border border-red-500/40 rounded-xl text-xs flex items-start gap-2.5">
+                  <span className="text-base leading-none">⚠️</span>
+                  <div className="flex-1">
+                    <p className="font-bold text-red-300">Quét bằng AI thất bại, đã chuyển sang OCR:</p>
+                    <p className="text-red-400 font-mono mt-0.5 text-[11px] break-all">{currentState.aiError}</p>
+                    <p className="text-gray-400 mt-1">
+                      Nhấn vào{' '}
+                      <button
+                        type="button"
+                        onClick={() => setIsSettingsOpen(true)}
+                        className="text-game-accent underline font-semibold"
+                      >
+                        Cài đặt AI
+                      </button>{' '}
+                      để kiểm tra lại API Key hoặc đổi mô hình (ví dụ: Gemini 2.5 Flash).
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Dropzone or Preview */}
               {currentState.previewUrl ? (
                 <ImagePreview

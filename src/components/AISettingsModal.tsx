@@ -50,12 +50,12 @@ export function AISettingsModal({ isOpen, onClose, onSettingsChanged }: AISettin
     setTestStatus('testing');
     setTestErrorMessage('');
     try {
-      const ok = await testGeminiApiKey(apiKey.trim(), selectedModel);
-      if (ok) {
+      const result = await testGeminiApiKey(apiKey.trim(), selectedModel);
+      if (result.success) {
         setTestStatus('success');
       } else {
         setTestStatus('error');
-        setTestErrorMessage('API Key không hợp lệ hoặc không có quyền truy cập');
+        setTestErrorMessage(result.error || 'API Key không hợp lệ hoặc không có quyền truy cập');
       }
     } catch (err: unknown) {
       setTestStatus('error');

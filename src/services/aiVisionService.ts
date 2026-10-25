@@ -18,14 +18,21 @@ export const DEFAULT_AI_MODEL = 'gemini-3.1-flash-lite';
 export const AVAILABLE_MODELS = [
   {
     id: 'gemini-3.1-flash-lite',
-    label: 'Gemini 3.1 Flash-Lite (Tối ưu nhất · Tốn ít token nhất · Miễn phí)',
+    label: 'Gemini 3.1 Flash-Lite (Tốn ít token nhất · ~280 tokens · Khuyên dùng)',
     tokens: '~280 tokens/ảnh',
     cost: '0.25$/1M token',
     recommended: true,
   },
   {
+    id: 'gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash (Tương thích phổ biến cao nhất)',
+    tokens: '~350 tokens/ảnh',
+    cost: 'Tiêu chuẩn',
+    recommended: false,
+  },
+  {
     id: 'gemini-3.5-flash-lite',
-    label: 'Gemini 3.5 Flash-Lite (Phiên bản mới nhất · Phản hồi cực nhanh)',
+    label: 'Gemini 3.5 Flash-Lite (Phiên bản mới nhất)',
     tokens: '~300 tokens/ảnh',
     cost: '0.25$/1M token',
     recommended: false,
@@ -119,24 +126,8 @@ export async function scanAPWithAI(
 
   const prompt = `Trích xuất số lượng của 4 loại bình AP màu xanh lá cây trong game Rise of Kingdoms (ROK): ap50, ap100, ap500, ap1000.`;
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { text: prompt },
-          {
-            inlineData: {
-              mimeType,
-              data: base64Data,
-            },
-          },
-        ],
-      },
-    ],
-    config: {
-      systemInstruction: `Bạn là trợ lý AI chuyên nhận diện vật phẩm trong game Rise of Kingdoms (ROK).
+  const configObj: Record<string, unknown> = {
+    systemInstruction: `Bạn là trợ lý AI chuyên nhận diện vật phẩm trong game Rise of Kingdoms (ROK).
 Quy tắc nhận dạng bình hồi phục AP (Action Point / Điểm Hành Động):
 1. ĐẶC ĐIỂM BÌNH AP: Là bình thủy tinh chứa DUNG DỊCH MÀU XANH LÁ CÂY (green potion liquid), miệng bình thắt dây đỏ có gắn thẻ cam.
 2. 4 LOẠI BÌNH AP (nhãn số ghi ở MẶT TRÊN của mỗi ô vật phẩm):
@@ -150,22 +141,56 @@ Quy tắc nhận dạng bình hồi phục AP (Action Point / Điểm Hành Đ�
    - Bỏ qua chìa khóa vàng, chìa khóa bạc, đồng xu vàng có hình chìa khóa, huy hiệu di chuyển, sách bìa đỏ (2024, 2025, 2026), trượng, rương, v.v.
    - CHỈ TẬP TRUNG VÀO CÁC Ô CÓ HÌNH BÌNH NƯỚC XANH LÁ CÂY.
 5. VỊ TRÍ: Bình AP có thể nằm rải rác ở bất kỳ hàng nào (hàng trên, hàng dưới, các cột khác nhau) trong kho túi đồ. Quét toàn bộ ảnh. Nếu loại bình nào không có trong ảnh thì điền 0.`,
-      maxOutputTokens: 64,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          ap50: { type: Type.INTEGER, description: 'Số lượng bình 50 AP (dung dịch xanh lá, nhãn trên 50)' },
-          ap100: { type: Type.INTEGER, description: 'Số lượng bình 100 AP (dung dịch xanh lá, nhãn trên 100)' },
-          ap500: { type: Type.INTEGER, description: 'Số lượng bình 500 AP (dung dịch xanh lá, nhãn trên 500)' },
-          ap1000: { type: Type.INTEGER, description: 'Số lượng bình 1000 AP (dung dịch xanh lá, nhãn trên 1.000)' },
-        },
-        required: ['ap50', 'ap100', 'ap500', 'ap1000'],
+    maxOutputTokens: 512,
+    responseMimeType: 'application/json',
+    responseSchema: {
+      type: Type.OBJECT,
+      properties: {
+        ap50: { type: Type.INTEGER, description: 'Số lượng bình 50 AP (dung dịch xanh lá, nhãn trên 50)' },
+        ap100: { type: Type.INTEGER, description: 'Số lượng bình 100 AP (dung dịch xanh lá, nhãn trên 100)' },
+        ap500: { type: Type.INTEGER, description: 'Số lượng bình 500 AP (dung dịch xanh lá, nhãn trên 500)' },
+        ap1000: { type: Type.INTEGER, description: 'Số lượng bình 1000 AP (dung dịch xanh lá, nhãn trên 1.000)' },
+      },
+      required: ['ap50', 'ap100', 'ap500', 'ap1000'],
+    },
+  };
+
+  const contents = [
+    {
+      inlineData: {
+        mimeType,
+        data: base64Data,
       },
     },
-  });
+    prompt,
+  ];
 
-  const rawJson = response.text || '{}';
+  let response;
+  try {
+    // Attempt with thinkingBudget: 0 for minimal token cost and instant output
+    response = await ai.models.generateContent({
+      model,
+      contents,
+      config: {
+        ...configObj,
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
+      },
+    });
+  } catch {
+    // If model does not support thinkingBudget, retry with standard config
+    response = await ai.models.generateContent({
+      model,
+      contents,
+      config: configObj,
+    });
+  }
+
+  let rawJson = (response.text || '{}').trim();
+  if (rawJson.startsWith('```')) {
+    rawJson = rawJson.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  }
   const parsed = JSON.parse(rawJson);
 
   const ap50 = Number.isFinite(parsed.ap50) ? Math.max(0, parsed.ap50) : 0;
@@ -207,43 +232,59 @@ export async function scanHonorWithAI(
 
   const prompt = `Trích xuất điểm Danh Dự (Honor points) của người chơi trong màn hình Bảng Danh Dự game Rise of Kingdoms (ROK).`;
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { text: prompt },
-          {
-            inlineData: {
-              mimeType,
-              data: base64Data,
-            },
-          },
-        ],
-      },
-    ],
-    config: {
-      systemInstruction: `Bạn là trợ lý AI chuyên trích xuất dữ liệu từ game Rise of Kingdoms (ROK).
+  const configObj: Record<string, unknown> = {
+    systemInstruction: `Bạn là trợ lý AI chuyên trích xuất dữ liệu từ game Rise of Kingdoms (ROK).
 Trong ảnh chụp màn hình 'Bảng Danh Dự' (Honor Roll / Honor Ranking):
 - Tìm và trích xuất điểm Danh Dự (Honor points) của người chơi.
 - Điểm Danh Dự thường là số nguyên lớn (ví dụ 810, 11040, 25000...).
 - Bỏ qua số thứ hạng Rank (1, 2, 3...) ở cột bên trái.
 - Bỏ qua ID máy chủ dạng #XXXX (ví dụ #2563).
 - Bỏ dấu chấm phân cách hàng nghìn và trả về số nguyên sạch.`,
-      maxOutputTokens: 32,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          honorValue: { type: Type.INTEGER, description: 'Điểm Danh Dự kiếm được' },
-        },
-        required: ['honorValue'],
+    maxOutputTokens: 256,
+    responseMimeType: 'application/json',
+    responseSchema: {
+      type: Type.OBJECT,
+      properties: {
+        honorValue: { type: Type.INTEGER, description: 'Điểm Danh Dự kiếm được' },
+      },
+      required: ['honorValue'],
+    },
+  };
+
+  const contents = [
+    {
+      inlineData: {
+        mimeType,
+        data: base64Data,
       },
     },
-  });
+    prompt,
+  ];
 
-  const rawJson = response.text || '{}';
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model,
+      contents,
+      config: {
+        ...configObj,
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
+      },
+    });
+  } catch {
+    response = await ai.models.generateContent({
+      model,
+      contents,
+      config: configObj,
+    });
+  }
+
+  let rawJson = (response.text || '{}').trim();
+  if (rawJson.startsWith('```')) {
+    rawJson = rawJson.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  }
   const parsed = JSON.parse(rawJson);
   const honorValue = Number.isFinite(parsed.honorValue) ? Math.max(0, parsed.honorValue) : 0;
 
@@ -255,21 +296,33 @@ Trong ảnh chụp màn hình 'Bảng Danh Dự' (Honor Roll / Honor Ranking):
 
 /**
  * Verifies if an API Key is valid by calling a lightweight prompt.
+ * Returns detailed status and error message if connection fails.
  */
-export async function testGeminiApiKey(apiKey: string, modelName?: string): Promise<boolean> {
+export async function testGeminiApiKey(
+  apiKey: string,
+  modelName?: string
+): Promise<{ success: boolean; error?: string }> {
   const key = apiKey.trim();
-  if (!key) return false;
+  if (!key) return { success: false, error: 'Chưa nhập API Key' };
 
-  const model = modelName || DEFAULT_AI_MODEL;
-  const ai = new GoogleGenAI({ apiKey: key });
+  try {
+    const model = modelName || getStoredModel();
+    const ai = new GoogleGenAI({ apiKey: key });
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: 'Hi',
-    config: {
-      maxOutputTokens: 5,
-    },
-  });
+    const response = await ai.models.generateContent({
+      model,
+      contents: 'Ping',
+      config: {
+        maxOutputTokens: 20,
+      },
+    });
 
-  return Boolean(response.text);
+    if (response.text) {
+      return { success: true };
+    }
+    return { success: false, error: 'Không nhận được dữ liệu từ API Google' };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: msg };
+  }
 }

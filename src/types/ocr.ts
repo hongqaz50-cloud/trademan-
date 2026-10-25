@@ -48,6 +48,7 @@ export interface StepScanState {
   apResult?: APScanResult;
   honorResult?: HonorScanResult;
   scanMethod?: 'ai' | 'ocr';
+  aiError?: string | null;
 }
 
 /** Aggregated final results computed from all 4 steps */
