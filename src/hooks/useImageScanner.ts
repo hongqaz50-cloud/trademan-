@@ -15,6 +15,12 @@
 import { useState, useCallback } from 'react';
 import { extractTextFromImage } from '@/services/ocrService';
 import { parseAPScreen, parseHonorScreen } from '@/utils/ocrParser';
+import {
+  scanAPWithAI,
+  scanHonorWithAI,
+  isAIEnabled,
+  getStoredApiKey,
+} from '@/services/aiVisionService';
 import type {
   ScanStep,
   StepScanState,
@@ -157,13 +163,46 @@ export function useImageScanner(
         honorResult: undefined,
       });
 
+      // 3. Check if AI Vision is enabled
+      const useAI = isAIEnabled() && Boolean(getStoredApiKey());
+
+      if (useAI) {
+        try {
+          updateStep(step, { scanProgress: 45 });
+          let apResult: APScanResult | undefined;
+          let honorResult: HonorScanResult | undefined;
+
+          if (step === 'apBefore' || step === 'apAfter') {
+            apResult = await scanAPWithAI(file);
+          } else {
+            honorResult = await scanHonorWithAI(file);
+          }
+
+          updateStep(step, {
+            isScanning: false,
+            scanProgress: 100,
+            isDone: true,
+            scanMethod: 'ai',
+            rawOCRText: JSON.stringify(apResult || honorResult, null, 2),
+            apResult,
+            honorResult,
+          });
+
+          setAggregated((prev) => mergeAggregated(prev, step, apResult, honorResult));
+          return;
+        } catch (aiErr) {
+          console.warn('AI scanning failed, falling back to offline OCR:', aiErr);
+          // If AI fails, proceed to offline Tesseract OCR fallback below
+        }
+      }
+
       try {
-        // 3. Run OCR
+        // 4. Fallback / Offline: Run Tesseract OCR
         const { text, words, imageWidth } = await extractTextFromImage(file, (progress) => {
           updateStep(step, { scanProgress: progress });
         });
 
-        // 4. Parse based on step type
+        // 5. Parse based on step type
         let apResult: APScanResult | undefined;
         let honorResult: HonorScanResult | undefined;
 
@@ -173,17 +212,18 @@ export function useImageScanner(
           honorResult = parseHonorScreen(text);
         }
 
-        // 5. Update step state as done
+        // 6. Update step state as done
         updateStep(step, {
           isScanning: false,
           scanProgress: 100,
           isDone: true,
+          scanMethod: 'ocr',
           rawOCRText: text,
           apResult,
           honorResult,
         });
 
-        // 6. Merge into aggregated results
+        // 7. Merge into aggregated results
         setAggregated((prev) => mergeAggregated(prev, step, apResult, honorResult));
 
       } catch {

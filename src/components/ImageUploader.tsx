@@ -15,6 +15,12 @@
 
 import { useRef, useState, useEffect } from 'react';
 import { useImageScanner, SCAN_STEP_ORDER } from '@/hooks/useImageScanner';
+import { AISettingsModal } from '@/components/AISettingsModal';
+import {
+  isAIEnabled,
+  getStoredApiKey,
+  getStoredModel,
+} from '@/services/aiVisionService';
 import type { ScanStep, APPotionPair, APScanResult, StepScanState } from '@/types/ocr';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -195,16 +201,22 @@ function Dropzone({
 }
 
 /** Scanning overlay on top of image preview */
-function ScanningOverlay({ progress }: { progress: number }) {
+function ScanningOverlay({ progress, scanMethod }: { progress: number; scanMethod?: 'ai' | 'ocr' }) {
+  const isAI = scanMethod === 'ai';
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-end pb-4 gap-2 bg-black/60 rounded-xl">
-      <div className="text-sm font-semibold text-game-accent">
-        🔍 Đang nhận diện... {progress}%
+      <div className="text-sm font-semibold text-game-accent flex items-center gap-1.5">
+        <span>{isAI ? '🤖' : '🔍'}</span>
+        {isAI ? 'AI Vision đang nhận diện... (Gemini 3.1 Flash-Lite)' : `Đang nhận diện... ${progress}%`}
       </div>
       <div className="w-4/5 h-2 bg-black/50 rounded-full overflow-hidden border border-game-border">
         <div
-          className="h-full bg-gradient-to-r from-game-accent to-game-purple rounded-full transition-all duration-300"
-          style={{ width: `${progress}%` }}
+          className={`h-full rounded-full transition-all duration-300 ${
+            isAI
+              ? 'bg-gradient-to-r from-game-accent via-cyan-300 to-game-purple animate-pulse w-full'
+              : 'bg-gradient-to-r from-game-accent to-game-purple'
+          }`}
+          style={isAI ? {} : { width: `${progress}%` }}
         />
       </div>
     </div>
@@ -368,6 +380,7 @@ function ImagePreview({
   isScanning,
   scanProgress,
   isDone,
+  scanMethod,
   onClear,
   children,
 }: {
@@ -375,6 +388,7 @@ function ImagePreview({
   isScanning: boolean;
   scanProgress: number;
   isDone: boolean;
+  scanMethod?: 'ai' | 'ocr';
   onClear: () => void;
   children?: React.ReactNode;
 }) {
@@ -389,11 +403,17 @@ function ImagePreview({
             isScanning ? 'opacity-40' : 'opacity-100'
           }`}
         />
-        {isScanning && <ScanningOverlay progress={scanProgress} />}
+        {isScanning && <ScanningOverlay progress={scanProgress} scanMethod={scanMethod} />}
         {isDone && (
           <div className="absolute top-2 right-2 flex gap-1">
-            <span className="bg-game-success/90 text-white text-xs font-semibold px-2 py-1 rounded-full flex items-center gap-1">
-              <span>✓</span> Xong
+            <span
+              className={`text-xs font-semibold px-2 py-1 rounded-full flex items-center gap-1 shadow-md ${
+                scanMethod === 'ai'
+                  ? 'bg-game-accent text-black font-bold'
+                  : 'bg-game-success/90 text-white'
+              }`}
+            >
+              <span>{scanMethod === 'ai' ? '🤖 Gemini 3.1 Flash-Lite' : '✓ OCR'}</span>
             </span>
           </div>
         )}
@@ -542,6 +562,11 @@ export function ImageUploader({ onScanComplete }: ImageUploaderProps) {
   } = useImageScanner(onScanComplete);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [aiUpdated, setAiUpdated] = useState(0);
+
+  const aiActive = isAIEnabled() && Boolean(getStoredApiKey());
+  const currentModel = getStoredModel();
   const currentConfig = STEP_CONFIGS.find((c) => c.key === currentStep)!;
   const currentState = stepStates[currentStep];
 
@@ -582,6 +607,45 @@ export function ImageUploader({ onScanComplete }: ImageUploaderProps) {
           )}
         </div>
 
+        {/* AI Engine Status Banner */}
+        <div className="flex items-center justify-between p-3 rounded-xl bg-black/25 border border-game-border/60">
+          <div className="flex items-center gap-2.5">
+            <span className="text-xl">{aiActive ? '🤖' : '⚡'}</span>
+            <div>
+              <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                {aiActive ? (
+                  <>
+                    <span className="text-game-accent">AI Vision Đang Bật: {currentModel}</span>
+                    <span className="bg-game-accent/20 text-game-accent text-[10px] px-1.5 py-0.5 rounded font-mono font-medium">
+                      ~280 tokens/ảnh
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-gray-300">Quét Offline (Tesseract OCR)</span>
+                    <span className="bg-gray-800 text-gray-400 text-[10px] px-1.5 py-0.5 rounded">
+                      Chưa cấu hình API Key
+                    </span>
+                  </>
+                )}
+              </div>
+              <div className="text-[11px] text-gray-400 mt-0.5">
+                {aiActive
+                  ? 'Trích xuất chính xác 100% kho AP & Bảng Danh Dự, tốn cực ít token'
+                  : 'Bật Gemini AI để nhận diện chính xác tuyệt đối mà không cần căn chỉnh'}
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsSettingsOpen(true)}
+            className="shrink-0 px-3 py-1.5 rounded-lg bg-black/50 border border-game-border hover:border-game-accent text-xs font-medium text-gray-300 hover:text-white transition-all flex items-center gap-1.5"
+          >
+            <span>⚙️</span>
+            <span>{aiActive ? 'Cài đặt AI' : 'Bật AI'}</span>
+          </button>
+        </div>
+
         {/* Step indicator */}
         <StepIndicator
           currentStep={currentStep}
@@ -618,6 +682,7 @@ export function ImageUploader({ onScanComplete }: ImageUploaderProps) {
                   isScanning={currentState.isScanning}
                   scanProgress={currentState.scanProgress}
                   isDone={currentState.isDone}
+                  scanMethod={currentState.scanMethod}
                   onClear={() => handleClearStep(currentStep)}
                 >
                   {/* AP steps: always show editable quantity table */}
@@ -720,6 +785,12 @@ export function ImageUploader({ onScanComplete }: ImageUploaderProps) {
           </>
         )}
       </div>
+
+      <AISettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onSettingsChanged={() => setAiUpdated((v) => v + 1)}
+      />
     </div>
   );
 }

@@ -3,9 +3,18 @@
  * No business logic, no state. Just structure.
  */
 
+import { useState } from 'react';
 import { CalculatorView } from '@/features/calculator/CalculatorView';
+import { AISettingsModal } from '@/components/AISettingsModal';
+import { isAIEnabled, getStoredApiKey, getStoredModel } from '@/services/aiVisionService';
 
 function App() {
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [, setRefreshKey] = useState(0);
+
+  const aiActive = isAIEnabled() && Boolean(getStoredApiKey());
+  const currentModel = getStoredModel();
+
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
@@ -22,9 +31,26 @@ function App() {
               <p className="text-xs text-gray-500 mt-0.5">Game Performance Analyzer</p>
             </div>
           </div>
-          <div className="hidden sm:flex items-center gap-2 text-xs text-gray-500 bg-black/20 border border-game-border/50 px-3 py-1.5 rounded-full">
-            <span className="w-2 h-2 rounded-full bg-game-success animate-pulse inline-block" />
-            Online
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-all ${
+                aiActive
+                  ? 'bg-game-accent/15 border-game-accent text-game-accent shadow-glow-cyan hover:bg-game-accent/25'
+                  : 'bg-black/20 border-game-border text-gray-400 hover:text-white hover:border-gray-500'
+              }`}
+              title="Cài đặt AI Vision (Gemini Flash-Lite)"
+            >
+              <span>{aiActive ? '🤖' : '⚙️'}</span>
+              <span className="font-semibold hidden sm:inline">
+                {aiActive ? `${currentModel}` : 'Cài đặt AI'}
+              </span>
+              <span className="sm:hidden font-semibold">AI</span>
+            </button>
+            <div className="hidden sm:flex items-center gap-2 text-xs text-gray-500 bg-black/20 border border-game-border/50 px-3 py-1.5 rounded-full">
+              <span className="w-2 h-2 rounded-full bg-game-success animate-pulse inline-block" />
+              Online
+            </div>
           </div>
         </div>
       </header>
@@ -58,6 +84,13 @@ function App() {
           AP Efficiency Calculator · Baseline: 3 Monsters / 65 AP · 10 Honor / Monster
         </div>
       </footer>
+
+      {/* AI Settings Modal */}
+      <AISettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onSettingsChanged={() => setRefreshKey((k) => k + 1)}
+      />
     </div>
   );
 }

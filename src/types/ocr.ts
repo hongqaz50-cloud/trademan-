@@ -47,6 +47,7 @@ export interface StepScanState {
   rawOCRText?: string;        // Raw Tesseract output — for debug display
   apResult?: APScanResult;
   honorResult?: HonorScanResult;
+  scanMethod?: 'ai' | 'ocr';
 }
 
 /** Aggregated final results computed from all 4 steps */
