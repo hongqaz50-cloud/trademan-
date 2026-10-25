@@ -1,11 +1,5 @@
 /**
  * ocrService.ts — Tesseract.js integration layer with spatial item detection.
- *
- * Pipeline:
- *   raw image → preprocess (4× scale + white text isolation + raw pixel cache)
- *             → Tesseract PSM 11 + digit whitelist
- *             → Spatial item detection (identifies green potion bottles)
- *             → structured OCRResult
  */
 
 import * as Tesseract from 'tesseract.js';
@@ -22,6 +16,8 @@ export interface OCRResult {
   text: string;
   confidence: number;
   words?: DetectedWord[];
+  imageWidth?: number;
+  imageHeight?: number;
 }
 
 /**
@@ -38,6 +34,8 @@ export async function extractTextFromImage(
 
   let processedSource: Blob | string = source instanceof Blob ? source : source;
   let rawImageData: ImageData | undefined;
+  let origWidth: number | undefined;
+  let origHeight: number | undefined;
 
   if (source instanceof Blob) {
     try {
@@ -45,6 +43,8 @@ export async function extractTextFromImage(
       const pre = await preprocessForOCR(source);
       processedSource = pre.blob;
       rawImageData = pre.rawImageData;
+      origWidth = pre.origWidth;
+      origHeight = pre.origHeight;
       onProgress?.(8);
     } catch {
       processedSource = source;
@@ -116,6 +116,8 @@ export async function extractTextFromImage(
       text: result.data.text,
       confidence: result.data.confidence,
       words,
+      imageWidth: origWidth,
+      imageHeight: origHeight,
     };
   } finally {
     if (blob) URL.revokeObjectURL(imageUrl);

@@ -72,13 +72,16 @@ export function extractAllNumbers(text: string): number[] {
  * Principles:
  * 1. The 4 AP potions always correspond to [50, 100, 500, 1000] in that fixed order.
  * 2. In full inventory screens, green potion bottles isolate AP potions from other items.
- * 3. In cropped potion screens, the quantities from left-to-right map directly to [50, 100, 500, 1000].
- * 4. Never shift quantities based on partial cost detection.
+ * 3. In cropped potion screens, each column quarter isolates one potion, preventing any shift.
  */
-export function parseAPScreen(rawText: string, words?: DetectedWord[]): APScanResult {
+export function parseAPScreen(
+  rawText: string,
+  words?: DetectedWord[],
+  imageWidth?: number
+): APScanResult {
   // ── Strategy 1: Spatial & Word Detection ────────────────────────────────────
   if (words && words.length > 0) {
-    // Filter to valid number words
+    // Filter to valid numbers (reject single dots or negative/NaN)
     const validWords = words.filter((w) => {
       const num = parseGameNumber(w.text);
       return !isNaN(num) && num >= 0 && w.text !== '.';
@@ -87,7 +90,7 @@ export function parseAPScreen(rawText: string, words?: DetectedWord[]): APScanRe
     // Potion words identified by green bottle liquid above the number
     const potionWords = validWords.filter((w) => w.isPotion);
 
-    // If 2 or more potion words were detected:
+    // If 2 or more potion words were detected (full inventory screen):
     if (potionWords.length >= 2) {
       potionWords.sort((a, b) => {
         const rowA = Math.floor(a.origY / 50);
@@ -107,7 +110,39 @@ export function parseAPScreen(rawText: string, words?: DetectedWord[]): APScanRe
       };
     }
 
-    // If all valid words can be sorted in reading order:
+    // Quarter columns isolation (when 4 cards are cropped in a row):
+    if (imageWidth && imageWidth > 0 && validWords.length > 0) {
+      const quarterWidth = imageWidth / 4;
+      const quarters: DetectedWord[][] = [[], [], [], []];
+
+      for (const w of validWords) {
+        const qIdx = Math.min(3, Math.max(0, Math.floor(w.origX / quarterWidth)));
+        quarters[qIdx].push(w);
+      }
+
+      const quantities = quarters.map((qWords) => {
+        if (qWords.length === 0) return 0;
+        if (qWords.length === 1) return parseGameNumber(qWords[0].text) || 0;
+        // If multiple words fall into one quarter, pick the one furthest down (bottom = quantity):
+        qWords.sort((a, b) => b.origY - a.origY);
+        return parseGameNumber(qWords[0].text) || 0;
+      });
+
+      // If at least one potion quantity is non-zero:
+      if (quantities.some((q) => q > 0)) {
+        const potions: APPotionPair[] = KNOWN_AP_COSTS.map((cost, idx) => ({
+          cost,
+          quantity: quantities[idx] || 0,
+        }));
+
+        return {
+          potions,
+          totalAP: potions.reduce((s, p) => s + p.cost * p.quantity, 0),
+        };
+      }
+    }
+
+    // If exactly 4 numbers exist in the crop: map directly to [50, 100, 500, 1000]
     validWords.sort((a, b) => {
       const rowA = Math.floor(a.origY / 50);
       const rowB = Math.floor(b.origY / 50);
@@ -115,7 +150,6 @@ export function parseAPScreen(rawText: string, words?: DetectedWord[]): APScanRe
       return a.origX - b.origX;
     });
 
-    // If exactly 4 numbers exist in the crop: map directly to [50, 100, 500, 1000]
     if (validWords.length === 4) {
       const potions: APPotionPair[] = KNOWN_AP_COSTS.map((cost, idx) => ({
         cost,

@@ -1,30 +1,26 @@
 /**
  * imagePreprocessor.ts — Canvas-based image preprocessing for OCR accuracy.
  *
- * Strategy: "White text isolation" + "Potion liquid spatial detector"
- * ──────────────────────────────────────────────────────────────────
+ * Strategy: "Luminance & Saturation text isolation" + "Potion liquid detector"
+ * ──────────────────────────────────────────────────────────────────────────
  * AP quantity numbers appear as WHITE text on a DARK banner.
  * Honor values appear as WHITE text on a DARK golden banner.
  *
  * Preprocessing pipeline:
  *  1. Extract raw image pixel data to detect green potion liquid.
  *  2. Scale up 4× with nearest-neighbor (sharp text edges).
- *  3. Isolate white/bright text against a clean white background.
+ *  3. Isolate white/bright text using luminance and low-saturation filter.
  */
 
 /** Scale factor — larger = better Tesseract accuracy (needs text ≥ 20px) */
 export const OCR_SCALE_FACTOR = 4;
 
-/**
- * Minimum channel value (0–255) to be considered "white/bright text".
- * Set to 175 to capture white text even with compression or dimming.
- */
-const WHITE_THRESHOLD = 175;
-
 export interface PreprocessResult {
   blob: Blob;
   rawImageData: ImageData;
   scaleFactor: number;
+  origWidth: number;
+  origHeight: number;
 }
 
 /**
@@ -86,7 +82,7 @@ export async function preprocessForOCR(source: Blob): Promise<PreprocessResult> 
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
 
-  // ── Step 3: White text isolation ──────────────────────────────────────────
+  // ── Step 3: Luminance & Saturation text isolation ─────────────────────────
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const { data } = imageData;
 
@@ -94,7 +90,16 @@ export async function preprocessForOCR(source: Blob): Promise<PreprocessResult> 
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
-    const isWhiteText = r > WHITE_THRESHOLD && g > WHITE_THRESHOLD && b > WHITE_THRESHOLD;
+
+    // Luminance calculation
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    // Saturation calculation: white text is neutral (low saturation)
+    const maxC = Math.max(r, g, b);
+    const minC = Math.min(r, g, b);
+    const sat = maxC - minC;
+
+    // Text pixel: bright luminance (> 125) and near-neutral white/grey (sat < 90)
+    const isWhiteText = lum > 125 && sat < 90;
     const val = isWhiteText ? 0 : 255;
 
     data[i] = val;
@@ -117,5 +122,7 @@ export async function preprocessForOCR(source: Blob): Promise<PreprocessResult> 
     blob,
     rawImageData,
     scaleFactor: OCR_SCALE_FACTOR,
+    origWidth,
+    origHeight,
   };
 }
