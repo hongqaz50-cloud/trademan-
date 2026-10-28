@@ -6,8 +6,17 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { CompletedShift, ActiveShift } from './shifts';
 
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://ssjmdhprgagydhiynqii.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_URL =
+  process.env.SUPABASE_URL ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  'https://ssjmdhprgagydhiynqii.supabase.co';
+
+const SUPABASE_KEY =
+  process.env.SUPABASE_KEY ||
+  process.env.SUPABASE_PUBLISHABLE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  'sb_publishable_CB86jv-LYBmHH5gerSs5XQ_vBl8oA7H';
 
 let supabaseInstance: SupabaseClient | null = null;
 
