@@ -14,7 +14,6 @@ import {
   setAIEnabled,
   testGeminiApiKey,
   AVAILABLE_MODELS,
-  DEFAULT_AI_MODEL,
 } from '@/services/aiVisionService';
 
 interface AISettingsModalProps {

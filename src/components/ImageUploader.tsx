@@ -563,7 +563,7 @@ export function ImageUploader({ onScanComplete }: ImageUploaderProps) {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [aiUpdated, setAiUpdated] = useState(0);
+  const [, setAiUpdated] = useState(0);
 
   const aiActive = isAIEnabled() && Boolean(getStoredApiKey());
   const currentModel = getStoredModel();

@@ -56,6 +56,22 @@ export interface SpeedupScanResult {
   research?: SpeedupItemData;
 }
 
+/** Combined batch extraction result from 3 screenshots (AP, Honor, Speedup) */
+export interface BatchScanResult {
+  ap: APScanResult;
+  honor: HonorScanResult;
+  speedup: SpeedupScanResult;
+  honorImageIndex?: number;
+  apImageIndex?: number;
+  speedupImageIndex?: number;
+}
+
+/** Result from smart single screenshot scan with automatic type classification */
+export type SmartScanResult =
+  | { type: 'honor'; result: HonorScanResult }
+  | { type: 'ap'; result: APScanResult }
+  | { type: 'speedup'; result: SpeedupScanResult };
+
 /** Per-step scan state stored in useImageScanner */
 export interface StepScanState {
   previewUrl: string | null;

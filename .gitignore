@@ -24,3 +24,9 @@ dist-ssr
 *.sw?
 
 *.traineddata
+.vercel
+
+# Environment secrets
+.env
+.env.*
+!.env.example

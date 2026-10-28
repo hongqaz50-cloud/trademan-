@@ -99,9 +99,9 @@ export function useAPCalculator(): UseAPCalculatorReturn {
       setFormValues(newValues);
       setErrors({});
 
-      // Auto-calculate if both values are valid
-      if (apSpent !== null && honorGained !== null && apSpent > 0 && honorGained >= 0) {
-        const calc = calculateAll(apSpent, honorGained);
+      // Auto-calculate if either or both values are valid (> 0)
+      if (apSpent !== null && honorGained !== null && (apSpent > 0 || honorGained > 0)) {
+        const calc = calculateAll(Math.max(0, apSpent), Math.max(0, honorGained));
         setResult(calc);
         setHasCalculated(true);
       }
