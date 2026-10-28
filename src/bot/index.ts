@@ -17,7 +17,7 @@ import { shiftManager, type ActiveShift, type CompletedShift } from './shifts';
 import { formatVNTime, formatROKGameTime, formatVNDate, formatVNMonth } from './timeUtils';
 import { computeShiftReport, buildReportEmbed } from './report';
 import { generateMonthlyExcelReport } from './excelExport';
-import { isBoss } from './permissions';
+import { isBoss, roleManager } from './permissions';
 import { salaryRateLimiter } from './rateLimiter';
 
 const client = new Client({
@@ -35,7 +35,7 @@ const client = new Client({
 client.once('clientReady', (c) => {
   console.log(`================================================`);
   console.log(`🤖 Discord Bot đã đăng nhập: ${c.user.tag}`);
-  console.log(`⚡ Sẵn sàng nhận lệnh: !huongdan, !start, !end, !salary, !excel, !status, !cancel`);
+  console.log(`⚡ Sẵn sàng nhận lệnh: !huongdan, !start, !end, !salary, !excel, !status, !cancel, !setboss, !setpilot, !roles`);
   console.log(`================================================`);
 });
 
@@ -55,6 +55,36 @@ client.on('messageCreate', async (message: Message) => {
     lower === '!lenh'
   ) {
     await handleHelp(message);
+    return;
+  }
+
+  // Command: !setboss @user or !addboss @user
+  if (lower.startsWith('!setboss') || lower.startsWith('!addboss')) {
+    await handleSetBoss(message);
+    return;
+  }
+
+  // Command: !removeboss @user or !delboss @user
+  if (lower.startsWith('!removeboss') || lower.startsWith('!delboss')) {
+    await handleRemoveBoss(message);
+    return;
+  }
+
+  // Command: !setpilot @user or !addpilot @user
+  if (lower.startsWith('!setpilot') || lower.startsWith('!addpilot')) {
+    await handleSetPilot(message);
+    return;
+  }
+
+  // Command: !removepilot @user or !delpilot @user
+  if (lower.startsWith('!removepilot') || lower.startsWith('!delpilot')) {
+    await handleRemovePilot(message);
+    return;
+  }
+
+  // Command: !roles or !listroles
+  if (lower === '!roles' || lower === '!listroles' || lower === '!role') {
+    await handleListRoles(message);
     return;
   }
 
@@ -253,7 +283,6 @@ async function handleEnd(message: Message) {
     const scanEnd = await scanBatchScreenshots(images);
 
     const endTime = Date.now();
-    const startTime = shift.startTime;
 
     // Remove active shift from tracking
     shiftManager.endShift(message.author.id);
@@ -271,7 +300,7 @@ async function handleEnd(message: Message) {
       pilotName: reportData.pilotName,
       accountName: reportData.accountName,
       note: reportData.note,
-      startTime,
+      startTime: shift.startTime,
       endTime,
       dateStr,
       monthStr,
@@ -706,7 +735,10 @@ async function handleHelp(message: Message) {
           `• \`!excel [tháng]\` : Xuất file Excel (.xlsx) đầy đủ tất cả nhân viên + bảng tự động tính tiền lương.\n` +
           `  *(Ví dụ: \`!excel\` hoặc \`!excel 10/2026\` hoặc \`!excel all\`)*\n` +
           `• \`!salary all [tháng]\` : Xem tổng hợp bảng công của toàn bộ đội ngũ.\n` +
-          `• \`!salary @pilot [tháng]\` : Xem chi tiết ca làm của một nhân viên bất kỳ.`,
+          `• \`!salary @pilot [tháng]\` : Xem chi tiết ca làm của một nhân viên bất kỳ.\n` +
+          `• \`!setboss @user\` : Phong quyền Boss cho một thành viên.\n` +
+          `• \`!setpilot @user\` : Xác nhận vai trò Pilot cho thành viên.\n` +
+          `• \`!roles\` : Xem danh sách tất cả Boss và Pilot trong hệ thống.`,
         inline: false,
       },
       {
@@ -719,6 +751,211 @@ async function handleHelp(message: Message) {
       }
     )
     .setFooter({ text: 'AP Efficiency Analyzer · ROK Pilot Bot' })
+    .setTimestamp();
+
+  await message.reply({ embeds: [embed] });
+}
+
+// ── 8. Handle Role Management (!setboss, !setpilot, !roles, ...) ────────────
+
+async function handleSetBoss(message: Message) {
+  if (!isBoss(message)) {
+    await message.reply('⛔ **Quyền truy cập bị từ chối!** Chỉ Boss hoặc Quản trị viên mới có thể phong vai trò Boss.');
+    return;
+  }
+
+  const targetUser = message.mentions.users.first();
+  const targetMember = message.mentions.members?.first();
+
+  if (!targetUser) {
+    await message.reply('⚠️ Cú pháp: `!setboss @user` (Hãy tag/mention người bạn muốn phong làm Boss).');
+    return;
+  }
+
+  roleManager.addBoss(targetUser.id);
+
+  // Attempt to assign Discord role if available
+  let discordRoleNote = '';
+  if (message.guild && targetMember) {
+    const bossRole = message.guild.roles.cache.find(
+      (r) => r.name.toLowerCase() === 'boss' || r.name.toLowerCase() === 'quản lý'
+    );
+    if (bossRole) {
+      try {
+        await targetMember.roles.add(bossRole);
+        discordRoleNote = `\n👑 *Đã tự động gắn Role Discord **${bossRole.name}** cho thành viên!*`;
+      } catch {
+        discordRoleNote = `\n*(Lưu ý: Để bot tự gán role Discord, hãy kéo role của Bot lên cao hơn role ${bossRole.name} trong cài đặt máy chủ).*`;
+      }
+    }
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('👑 ĐÃ PHONG VAI TRÒ BOSS THÀNH CÔNG')
+    .setColor(0xf59e0b)
+    .setDescription(
+      `Thành viên <@${targetUser.id}> (**${targetUser.username}**) đã được cấp quyền **Boss**!${discordRoleNote}\n\n` +
+      `**Các quyền được mở khóa:**\n` +
+      `• Xuất file Excel (\`!excel\`) chứa toàn bộ ca làm & tính lương của cả đội.\n` +
+      `• Xem bảng công của mọi nhân viên (\`!salary all\` hoặc \`!salary @pilot\`).\n` +
+      `• Tra cứu lương không giới hạn lượt.\n` +
+      `• Phân quyền Boss và Pilot cho người khác (\`!setboss\`, \`!setpilot\`).`
+    )
+    .setFooter({ text: 'Hệ thống phân quyền · AP Efficiency Bot' })
+    .setTimestamp();
+
+  await message.reply({ embeds: [embed] });
+}
+
+async function handleRemoveBoss(message: Message) {
+  if (!isBoss(message)) {
+    await message.reply('⛔ **Quyền truy cập bị từ chối!**');
+    return;
+  }
+
+  const targetUser = message.mentions.users.first();
+  const targetMember = message.mentions.members?.first();
+
+  if (!targetUser) {
+    await message.reply('⚠️ Cú pháp: `!removeboss @user`');
+    return;
+  }
+
+  if (message.guild && message.guild.ownerId === targetUser.id) {
+    await message.reply('❌ Không thể hủy quyền Boss của Chủ Server Discord!');
+    return;
+  }
+
+  roleManager.removeBoss(targetUser.id);
+
+  if (message.guild && targetMember) {
+    const bossRole = message.guild.roles.cache.find(
+      (r) => r.name.toLowerCase() === 'boss' || r.name.toLowerCase() === 'quản lý'
+    );
+    if (bossRole) {
+      try {
+        await targetMember.roles.remove(bossRole);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  await message.reply(`🛑 Đã hủy quyền Boss của <@${targetUser.id}>. Thành viên này quay về quyền Pilot thông thường.`);
+}
+
+async function handleSetPilot(message: Message) {
+  if (!isBoss(message)) {
+    await message.reply('⛔ **Quyền truy cập bị từ chối!** Chỉ Boss mới có thể phân quyền Pilot.');
+    return;
+  }
+
+  const targetUser = message.mentions.users.first();
+  const targetMember = message.mentions.members?.first();
+
+  if (!targetUser) {
+    await message.reply('⚠️ Cú pháp: `!setpilot @user` (Hãy tag người bạn muốn gắn vai trò Pilot).');
+    return;
+  }
+
+  roleManager.addPilot(targetUser.id);
+
+  let discordRoleNote = '';
+  if (message.guild && targetMember) {
+    const pilotRole = message.guild.roles.cache.find(
+      (r) => r.name.toLowerCase() === 'pilot'
+    );
+    if (pilotRole) {
+      try {
+        await targetMember.roles.add(pilotRole);
+        discordRoleNote = `\n🎮 *Đã tự động gắn Role Discord **${pilotRole.name}** cho thành viên!*`;
+      } catch {
+        discordRoleNote = `\n*(Lưu ý: Để bot tự gán role Discord, hãy kéo role của Bot lên cao hơn role ${pilotRole.name} trong cài đặt máy chủ).*`;
+      }
+    }
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('🎮 ĐÃ GÁN VAI TRÒ PILOT THÀNH CÔNG')
+    .setColor(0x10b981)
+    .setDescription(
+      `Thành viên <@${targetUser.id}> (**${targetUser.username}**) đã được xác nhận vai trò **Pilot**!${discordRoleNote}\n\n` +
+      `**Quy trình làm việc của Pilot:**\n` +
+      `• Gõ \`!start\` kèm 3 ảnh bắt đầu ca làm.\n` +
+      `• Gõ \`!end\` kèm 3 ảnh kết thúc ca làm.\n` +
+      `• Gõ \`!salary\` để tra cứu số giờ và công của bản thân (tối đa 2 lần/ngày).\n` +
+      `• Gõ \`!huongdan\` để xem hướng dẫn chi tiết.`
+    )
+    .setFooter({ text: 'Hệ thống quản lý Pilot · AP Efficiency Bot' })
+    .setTimestamp();
+
+  await message.reply({ embeds: [embed] });
+}
+
+async function handleRemovePilot(message: Message) {
+  if (!isBoss(message)) {
+    await message.reply('⛔ **Quyền truy cập bị từ chối!**');
+    return;
+  }
+
+  const targetUser = message.mentions.users.first();
+  const targetMember = message.mentions.members?.first();
+
+  if (!targetUser) {
+    await message.reply('⚠️ Cú pháp: `!removepilot @user`');
+    return;
+  }
+
+  roleManager.removePilot(targetUser.id);
+
+  if (message.guild && targetMember) {
+    const pilotRole = message.guild.roles.cache.find(
+      (r) => r.name.toLowerCase() === 'pilot'
+    );
+    if (pilotRole) {
+      try {
+        await targetMember.roles.remove(pilotRole);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  await message.reply(`🛑 Đã hủy vai trò Pilot của <@${targetUser.id}>.`);
+}
+
+async function handleListRoles(message: Message) {
+  const bosses = roleManager.getBossList();
+  const pilots = roleManager.getPilotList();
+
+  const bossText =
+    bosses.length > 0
+      ? bosses.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`).join('\n')
+      : '*(Chưa có Boss nào được thêm thủ công. Chủ server & Admin tự động có quyền Boss)*';
+
+  const pilotText =
+    pilots.length > 0
+      ? pilots.map((id, i) => `${i + 1}. <@${id}> (\`${id}\`)`).join('\n')
+      : '*(Chưa có danh sách Pilot thủ công. Mọi thành viên chạy !start/!end đều được tính công)*';
+
+  const embed = new EmbedBuilder()
+    .setTitle('👥 DANH SÁCH PHÂN QUYỀN VAI TRÒ (ROLES)')
+    .setColor(0x3b82f6)
+    .addFields(
+      { name: '👑 Danh Sách Boss / Quản Lý', value: bossText, inline: false },
+      { name: '🎮 Danh Sách Pilot / Nhân Viên', value: pilotText, inline: false },
+      {
+        name: '⚙️ Lệnh Quản Trị Vai Trò (Dành cho Boss)',
+        value:
+          `• \`!setboss @user\` : Thêm một thành viên làm Boss\n` +
+          `• \`!removeboss @user\` : Hủy quyền Boss\n` +
+          `• \`!setpilot @user\` : Đăng ký vai trò Pilot\n` +
+          `• \`!removepilot @user\` : Hủy vai trò Pilot\n` +
+          `• \`!roles\` : Xem bảng phân quyền này`,
+        inline: false,
+      }
+    )
+    .setFooter({ text: 'AP Efficiency Bot · Quản lý vai trò nhân sự' })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });
