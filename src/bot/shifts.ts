@@ -159,6 +159,34 @@ class ShiftManager {
     });
   }
 
+  public getPilotShifts(
+    userId: string,
+    pilotKeywords: string[] = [],
+    filterMonth?: string
+  ): CompletedShift[] {
+    const monthShifts = this.getCompletedShifts(filterMonth);
+    const lowerKeywords = pilotKeywords
+      .map((k) => k.trim().toLowerCase())
+      .filter(Boolean);
+
+    return monthShifts.filter((s) => {
+      // 1. Exact userId match
+      if (s.userId && s.userId === userId) {
+        return true;
+      }
+      // 2. Keyword match against pilotName
+      if (lowerKeywords.length > 0) {
+        const sPilot = (s.pilotName || '').toLowerCase();
+        for (const kw of lowerKeywords) {
+          if (sPilot === kw || sPilot.includes(kw) || kw.includes(sPilot)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    });
+  }
+
   public getAvailableMonths(): string[] {
     const set = new Set<string>();
     for (const s of this.history) {

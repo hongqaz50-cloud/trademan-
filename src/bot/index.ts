@@ -17,6 +17,8 @@ import { shiftManager, type ActiveShift, type CompletedShift } from './shifts';
 import { formatVNTime, formatROKGameTime, formatVNDate, formatVNMonth } from './timeUtils';
 import { computeShiftReport, buildReportEmbed } from './report';
 import { generateMonthlyExcelReport } from './excelExport';
+import { isBoss } from './permissions';
+import { salaryRateLimiter } from './rateLimiter';
 
 const client = new Client({
   intents: [
@@ -33,7 +35,7 @@ const client = new Client({
 client.once('clientReady', (c) => {
   console.log(`================================================`);
   console.log(`🤖 Discord Bot đã đăng nhập: ${c.user.tag}`);
-  console.log(`⚡ Sẵn sàng nhận lệnh: !start, !end, !excel, !luong, !status, !cancel, !help`);
+  console.log(`⚡ Sẵn sàng nhận lệnh: !huongdan, !start, !end, !salary, !excel, !status, !cancel`);
   console.log(`================================================`);
 });
 
@@ -45,19 +47,24 @@ client.on('messageCreate', async (message: Message) => {
   const content = message.content.trim();
   const lower = content.toLowerCase();
 
-  // Command: !help
-  if (lower === '!help') {
+  // Command: !help, !huongdan, !guide, !lenh
+  if (
+    lower === '!help' ||
+    lower === '!huongdan' ||
+    lower === '!guide' ||
+    lower === '!lenh'
+  ) {
     await handleHelp(message);
     return;
   }
 
-  // Command: !excel [month]
+  // Command: !excel [month] or !export [month]
   if (lower.startsWith('!excel') || lower.startsWith('!export')) {
     await handleExcel(message);
     return;
   }
 
-  // Command: !luong [month] or !salary
+  // Command: !luong [month] or !salary [month]
   if (lower.startsWith('!luong') || lower.startsWith('!salary')) {
     await handleLuong(message);
     return;
@@ -169,38 +176,27 @@ async function handleStart(message: Message) {
     const embed = new EmbedBuilder()
       .setTitle('🟢 BẮT ĐẦU CA LÀM VIỆC (SHIFT STARTED)')
       .setColor(0x10b981)
-      .setDescription(`Đã ghi nhận dữ liệu ban đầu cho Pilot **${pilotName}**!`)
       .addFields(
+        { name: '👤 Pilot', value: `\`${pilotName}\``, inline: true },
+        { name: '🏰 Tài Khoản (Account)', value: `\`${scan.accountName}\``, inline: true },
+        { name: '📝 Ghi Chú', value: `\`${note}\``, inline: true },
+        { name: '⏰ Bắt Đầu (Giờ VN UTC+7)', value: `\`${startVN}\``, inline: true },
+        { name: '🎮 Bắt Đầu (Giờ Game ROK)', value: `\`${startROK}\``, inline: true },
+        { name: '🎖️ Điểm Danh Dự Đầu Ca', value: `**${scan.honorValue.toLocaleString('en-US')}**`, inline: true },
+        { name: '🧪 Tổng Kho AP Đầu Ca', value: `**${scan.totalAP.toLocaleString('en-US')}** AP`, inline: true },
         {
-          name: '👤 Pilot & Tài Khoản',
-          value: `**Pilot:** \`${pilotName}\`\n**Account:** \`${scan.accountName}\`\n**Ghi chú:** \`${note}\``,
-          inline: false,
-        },
-        {
-          name: '⏰ Giờ Bắt Đầu',
-          value: `🇻🇳 **UTC+7 (Việt Nam):** \`${startVN}\`\n🎮 **ROK Game Time:** \`${startROK}\``,
+          name: '⚡ Tăng Tốc Đầu Ca',
+          value: `Chung: \`${uDays}d ${uHours}h\` · Luyện: \`${Math.floor(scan.trainingMinutes / 1440)}d\` · Chữa: \`${Math.floor(scan.healingMinutes / 1440)}d\``,
           inline: true,
-        },
-        {
-          name: '🎖️ Danh Dự Ban Đầu',
-          value: `\`${scan.honorValue.toLocaleString('en-US')}\` Điểm`,
-          inline: true,
-        },
-        {
-          name: '🧪 Kho Bình AP Ban Đầu',
-          value: `**${scan.totalAP.toLocaleString('en-US')}** AP\n*(50x${scan.ap50} · 100x${scan.ap100} · 500x${scan.ap500} · 1kx${scan.ap1000})*`,
-          inline: false,
-        },
-        {
-          name: '⚡ Tăng Tốc Ban Đầu',
-          value: `Universal: \`${uDays}d ${uHours}h\` · Training: \`${Math.floor(scan.trainingMinutes / 1440)}d\` · Healing: \`${Math.floor(scan.healingMinutes / 1440)}d\``,
-          inline: false,
         }
       )
-      .setFooter({ text: 'Khi kết thúc ca làm, hãy gửi "!end" kèm 3 ảnh kết thúc để tạo Báo Cáo' })
+      .setFooter({ text: 'Khi kết thúc ca, hãy gửi "!end [ghi chú]" kèm 3 ảnh kết thúc!' })
       .setTimestamp();
 
-    await statusMsg.edit({ content: '', embeds: [embed] });
+    await statusMsg.edit({
+      content: '✅ **Ca làm việc đã được bắt đầu thành công!**',
+      embeds: [embed],
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('Lỗi khi xử lý !start:', err);
@@ -213,8 +209,7 @@ async function handleStart(message: Message) {
 async function handleEnd(message: Message) {
   if (!GEMINI_API_KEY) {
     await message.reply(
-      '⚠️ **Chưa có Gemini API Key!**\n' +
-      'Vui lòng gõ lệnh: `!setkey <key_của_bạn>` để kích hoạt quét ảnh AI (Lấy key miễn phí tại: https://aistudio.google.com/app/apikey)'
+      '⚠️ **Chưa có Gemini API Key!**\nVui lòng gõ lệnh: `!setkey <key_của_bạn>` để kích hoạt quét ảnh AI.'
     );
     return;
   }
@@ -222,21 +217,15 @@ async function handleEnd(message: Message) {
   const shift = shiftManager.getShift(message.author.id);
 
   if (!shift) {
-    await message.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle('⚠️ Chưa Bắt Đầu Ca Làm')
-          .setColor(0xef4444)
-          .setDescription(
-            `Bạn chưa có ca làm nào đang chạy!\n\n` +
-            `👉 Hãy gửi lệnh \`!start\` kèm **3 ảnh ban đầu** để bắt đầu ca làm mới.`
-          ),
-      ],
-    });
+    await message.reply(
+      '⚠️ **Bạn chưa bắt đầu ca làm nào!**\n' +
+      'Vui lòng gửi lệnh `!start [ghi chú]` kèm 3 ảnh ban đầu trước khi kết thúc ca.'
+    );
     return;
   }
 
   const images = getAttachedImageUrls(message);
+
   if (images.length === 0) {
     await message.reply({
       embeds: [
@@ -245,35 +234,44 @@ async function handleEnd(message: Message) {
           .setColor(0xf59e0b)
           .setDescription(
             `Vui lòng đính kèm **3 ảnh chụp màn hình kết thúc** cùng với lệnh \`!end\`:\n\n` +
-            `1. 🎖️ **Bảng Danh Dự** (Đợt sau)\n` +
-            `2. 🧪 **Kho Bình AP** (Đợt sau)\n` +
-            `3. ⚡ **Kho Tăng Tốc** (Đợt sau)`
+            `1. 🎖️ **Bảng Danh Dự** (Honor Board)\n` +
+            `2. 🧪 **Kho Bình AP** (Action Points in bag)\n` +
+            `3. ⚡ **Kho Tăng Tốc** (Speedups in bag)\n\n` +
+            `*Ví dụ:* Gửi 3 ảnh với nội dung \`!end\`.`
           ),
       ],
     });
     return;
   }
 
-  const overrideNote = message.content.slice('!end'.length).trim();
-  const statusMsg = await message.reply('⏳ **Đang phân tích 3 ảnh kết thúc và tính toán hiệu suất...**');
+  const rawNote = message.content.slice('!end'.length).trim();
+  const endNote = rawNote || shift.note || '5 marches';
+
+  const statusMsg = await message.reply('⏳ **Đang phân tích 3 ảnh kết thúc và tổng hợp báo cáo...**');
 
   try {
-    const endScan = await scanBatchScreenshots(images);
+    const scanEnd = await scanBatchScreenshots(images);
+
     const endTime = Date.now();
+    const startTime = shift.startTime;
 
-    const reportData = computeShiftReport(shift, endScan, endTime, overrideNote);
+    // Remove active shift from tracking
+    shiftManager.endShift(message.author.id);
 
-    // Save completed shift to monthly history database
+    // Compute complete shift report
+    const reportData = computeShiftReport(shift, scanEnd, endTime, endNote);
+
     const dateStr = formatVNDate(endTime);
     const monthStr = formatVNMonth(endTime);
 
-    const completed: CompletedShift = {
+    // Save to completed shifts history
+    const completedShift: CompletedShift = {
       id: `shift_${endTime}_${message.author.id}`,
       userId: message.author.id,
       pilotName: reportData.pilotName,
       accountName: reportData.accountName,
       note: reportData.note,
-      startTime: shift.startTime,
+      startTime,
       endTime,
       dateStr,
       monthStr,
@@ -283,43 +281,26 @@ async function handleEnd(message: Message) {
       honorGained: reportData.honorGained,
       apSpent: reportData.apSpent,
       monstersKilled: reportData.monstersKilled,
-      efficiencyRate: Math.round(reportData.efficiencyRate * 10) / 10,
+      efficiencyRate: reportData.efficiencyRate,
       efficiencyGrade: reportData.efficiencyTier.grade,
       universalSpeed: reportData.universalSpeed,
       trainingSpeed: reportData.trainingSpeed,
       healingSpeed: reportData.healingSpeed,
       createdAt: endTime,
     };
-    shiftManager.saveCompletedShift(completed);
-
-    // Remove shift from active manager
-    shiftManager.endShift(message.author.id);
-
-    // Generate updated monthly Excel file
-    let excelAttachment: AttachmentBuilder | null = null;
-    try {
-      const monthShifts = shiftManager.getCompletedShifts(monthStr);
-      const excel = await generateMonthlyExcelReport(monthShifts, {
-        monthFilter: monthStr,
-        now: endTime,
-      });
-      excelAttachment = new AttachmentBuilder(excel.buffer, { name: excel.fileName });
-    } catch (excelErr) {
-      console.error('Lỗi tạo file Excel trong !end:', excelErr);
-    }
+    shiftManager.saveCompletedShift(completedShift);
 
     const embed = buildReportEmbed(reportData);
 
-    // Reply with Embed, Excel File Attachment, and Monospace Text
+    // Reply with Embed
     await statusMsg.edit({
-      content: `✅ **Ca làm đã hoàn tất! Đã tự động lưu vào sổ lương Tháng ${monthStr}:**`,
+      content: `✅ **Ca làm đã hoàn tất! Đã tự động lưu vào sổ chấm công Tháng ${monthStr}:**`,
       embeds: [embed],
-      files: excelAttachment ? [excelAttachment] : [],
     });
 
     // Send pure text block for easy mobile copy
     await message.reply({
-      content: `\`\`\`\n${reportData.reportText}\n\`\`\`\n📊 *File Excel tính lương tháng đã được đính kèm ở tin nhắn trên. Gõ lệnh \`!excel\` để tải toàn bộ bảng tính bất kỳ lúc nào.*`,
+      content: `\`\`\`\n${reportData.reportText}\n\`\`\`\n💼 *Dữ liệu ca đã được lưu tự động. Bạn có thể dùng lệnh \`!salary\` để tra cứu tổng kết ca của bản thân.*`,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -331,6 +312,22 @@ async function handleEnd(message: Message) {
 // ── 3. Handle !excel ─────────────────────────────────────────────────────────
 
 async function handleExcel(message: Message) {
+  // Access Control: Boss / Admin only!
+  if (!isBoss(message)) {
+    const embed = new EmbedBuilder()
+      .setTitle('⛔ QUYỀN TRUY CẬP BỊ TỪ CHỐI')
+      .setColor(0xef4444)
+      .setDescription(
+        `Xin chào **${message.member?.displayName || message.author.username}**,\n\n` +
+        `Lệnh \`!excel\` chỉ dành riêng cho **Boss / Quản Lý** để bảo mật toàn bộ dữ liệu lương và ca làm của cả đội.\n\n` +
+        `👉 Để xem số ca và số giờ làm của **chính bạn**, hãy sử dụng lệnh:\n` +
+        `**\`!salary\`** hoặc **\`!luong\`** *(Tối đa 2 lần / ngày)*`
+      )
+      .setFooter({ text: 'Bảo mật thông tin nhân sự · AP Efficiency Bot' });
+    await message.reply({ embeds: [embed] });
+    return;
+  }
+
   const content = message.content.trim();
   const rawArg = content.replace(/^!(?:excel|export)/i, '').trim();
 
@@ -388,7 +385,7 @@ async function handleExcel(message: Message) {
           inline: false,
         }
       )
-      .setFooter({ text: 'AP Efficiency Bot · Excel Payroll Generator' })
+      .setFooter({ text: 'AP Efficiency Bot · Dành riêng cho Boss / Quản lý' })
       .setTimestamp();
 
     await statusMsg.edit({
@@ -403,59 +400,216 @@ async function handleExcel(message: Message) {
   }
 }
 
-// ── 4. Handle !luong ─────────────────────────────────────────────────────────
+// ── 4. Handle !luong / !salary ───────────────────────────────────────────────
 
 async function handleLuong(message: Message) {
   const content = message.content.trim();
   const rawArg = content.replace(/^!(?:luong|salary)/i, '').trim();
   const now = Date.now();
-  const targetMonth = rawArg || formatVNMonth(now);
+  const currentMonth = formatVNMonth(now);
 
-  const shifts = shiftManager.getCompletedShifts(targetMonth);
-  if (shifts.length === 0) {
-    const available = shiftManager.getAvailableMonths();
-    const availableText = available.length > 0 ? available.join(', ') : 'Chưa có tháng nào';
+  const isUserBoss = isBoss(message);
+
+  // Parse arguments: could be a month (e.g. "10/2026", "10"), "all", or a pilot name / mention
+  const tokens = rawArg.split(/\s+/).filter(Boolean);
+  let targetMonth = currentMonth;
+  let targetUserOrName = '';
+  let showAll = false;
+
+  for (const token of tokens) {
+    if (token.toLowerCase() === 'all') {
+      showAll = true;
+    } else if (/^\d{1,2}(\/\d{4})?$/.test(token)) {
+      targetMonth = token;
+    } else {
+      targetUserOrName = token;
+    }
+  }
+
+  // Check if someone was mentioned: message.mentions.users.first()
+  const mentionedUser = message.mentions.users.first();
+  if (mentionedUser) {
+    targetUserOrName = mentionedUser.id;
+  }
+
+  // ── CASE 1: BOSS VIEWING ALL PILOTS ──
+  if (isUserBoss && (showAll || (!targetUserOrName && !tokens.some((t) => t.toLowerCase() === 'me')))) {
+    const shifts = shiftManager.getCompletedShifts(targetMonth);
+    if (shifts.length === 0) {
+      const available = shiftManager.getAvailableMonths();
+      const availableText = available.length > 0 ? available.join(', ') : 'Chưa có tháng nào';
+      await message.reply(
+        `ℹ️ Chưa có ca làm nào trong kỳ **${targetMonth}**.\n` +
+        `Các tháng hiện có dữ liệu: \`${availableText}\``
+      );
+      return;
+    }
+
+    const pilotMap = new Map<
+      string,
+      { shifts: number; hours: number; ap: number; honor: number }
+    >();
+
+    for (const s of shifts) {
+      if (!pilotMap.has(s.pilotName)) {
+        pilotMap.set(s.pilotName, { shifts: 0, hours: 0, ap: 0, honor: 0 });
+      }
+      const item = pilotMap.get(s.pilotName)!;
+      item.shifts++;
+      item.hours += s.hoursFloat;
+      item.ap += s.apSpent;
+      item.honor += s.honorGained;
+    }
+
+    const lines = Array.from(pilotMap.entries()).map(([pilot, data], idx) => {
+      const hoursFormatted = Math.round(data.hours * 10) / 10;
+      return `${idx + 1}. **${pilot}**: \`${hoursFormatted}h\` làm việc (${data.shifts} ca) · AP: \`${data.ap.toLocaleString('en-US')}\` · Danh dự: \`${data.honor.toLocaleString('en-US')}\``;
+    });
+
+    const totalHours = Math.round(shifts.reduce((acc, s) => acc + s.hoursFloat, 0) * 10) / 10;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`👑 TỔNG HỢP CÔNG TOÀN ĐỘI - THÁNG ${targetMonth}`)
+      .setColor(0x06b6d4)
+      .setDescription(lines.join('\n\n'))
+      .addFields(
+        { name: '👥 Nhân Viên', value: `${pilotMap.size} người`, inline: true },
+        { name: '📋 Tổng Ca Làm', value: `${shifts.length} ca`, inline: true },
+        { name: '⏳ Tổng Giờ Toàn Đội', value: `${totalHours} giờ`, inline: true }
+      )
+      .setFooter({ text: 'Boss Menu · Gõ !excel để tải file Excel có công thức tính lương tự động' })
+      .setTimestamp();
+
+    await message.reply({ embeds: [embed] });
+    return;
+  }
+
+  // ── CASE 2: BOSS CHECKING A SPECIFIC PILOT ──
+  if (isUserBoss && targetUserOrName) {
+    const pilotKeywords = [targetUserOrName];
+    if (mentionedUser) {
+      pilotKeywords.push(mentionedUser.username, mentionedUser.displayName || '');
+    }
+    const shifts = shiftManager.getPilotShifts(
+      mentionedUser ? mentionedUser.id : targetUserOrName,
+      pilotKeywords,
+      targetMonth
+    );
+
+    if (shifts.length === 0) {
+      await message.reply(
+        `ℹ️ Không tìm thấy ca làm nào của nhân viên \`${targetUserOrName}\` trong kỳ **${targetMonth}**.`
+      );
+      return;
+    }
+
+    const pilotDisplayName = shifts[0].pilotName || targetUserOrName;
+    const totalHours = Math.round(shifts.reduce((acc, s) => acc + s.hoursFloat, 0) * 10) / 10;
+    const totalHonor = shifts.reduce((acc, s) => acc + s.honorGained, 0);
+    const totalAP = shifts.reduce((acc, s) => acc + s.apSpent, 0);
+    const totalMonsters = shifts.reduce((acc, s) => acc + s.monstersKilled, 0);
+
+    const recentShiftsText = shifts
+      .slice(-5)
+      .reverse()
+      .map(
+        (s, i) =>
+          `${i + 1}. **${s.dateStr}** - Acc: \`${s.accountName}\` | \`${s.hoursStr}h\` | Hạng **${s.efficiencyGrade}** (${s.efficiencyRate}%) | Danh dự: +${s.honorGained.toLocaleString('en-US')}`
+      )
+      .join('\n');
+
+    const embed = new EmbedBuilder()
+      .setTitle(`💼 BẢNG CÔNG NHÂN VIÊN: ${pilotDisplayName}`)
+      .setColor(0x3b82f6)
+      .setDescription(`Dữ liệu ca làm việc trong **Tháng ${targetMonth}** (Chế độ xem Boss):`)
+      .addFields(
+        { name: '📋 Tổng Ca Làm', value: `**${shifts.length}** ca`, inline: true },
+        { name: '⏳ Tổng Giờ Làm', value: `**${totalHours}** giờ`, inline: true },
+        { name: '🎖️ Tổng Danh Dự', value: `**${totalHonor.toLocaleString('en-US')}**`, inline: true },
+        { name: '🧪 Tổng AP Tiêu Hao', value: `**${totalAP.toLocaleString('en-US')}** AP`, inline: true },
+        { name: '👾 Quái Diệt', value: `**${totalMonsters.toLocaleString('en-US')}**`, inline: true },
+        { name: '📅 Kỳ Tính', value: `\`${targetMonth}\``, inline: true },
+        { name: '📝 5 Ca Gần Nhất', value: recentShiftsText || 'Chưa có chi tiết ca.', inline: false }
+      )
+      .setFooter({ text: 'Boss Viewer · Không giới hạn lượt tra cứu' })
+      .setTimestamp();
+
+    await message.reply({ embeds: [embed] });
+    return;
+  }
+
+  // ── CASE 3: NORMAL PILOT (NGƯỜI LÀM) — CHECKING THEMSELVES ONLY ──
+  // Check daily rate limit (2 checks per day)
+  const rateLimit = salaryRateLimiter.canCheckSalary(message.author.id);
+  if (!rateLimit.allowed) {
+    const embed = new EmbedBuilder()
+      .setTitle('⚠️ ĐÃ HẾT LƯỢT KIỂM TRA LƯƠNG HÔM NAY')
+      .setColor(0xf59e0b)
+      .setDescription(
+        `Xin chào **${message.member?.displayName || message.author.username}**,\n\n` +
+        `Bạn đã sử dụng hết **2 / 2** lượt kiểm tra công hôm nay.\n` +
+        `Quy định: Mỗi Pilot được tra cứu tối đa **2 lần / ngày** để đảm bảo bảo mật hệ thống.\n\n` +
+        `⏰ Lượt tra cứu sẽ được làm mới vào lúc **00:00 ngày mai (giờ VN)**.\n` +
+        `*Nếu có thắc mắc khẩn cấp về công hoặc lương, vui lòng liên hệ Boss / Quản Lý.*`
+      )
+      .setFooter({ text: 'Giới hạn 2 lần/ngày · Bảo mật dữ liệu Pilot' });
+    await message.reply({ embeds: [embed] });
+    return;
+  }
+
+  // Get this pilot's shifts for target month
+  const pilotKeywords = [
+    message.member?.displayName || '',
+    message.author.globalName || '',
+    message.author.username,
+  ].filter(Boolean);
+
+  const userShifts = shiftManager.getPilotShifts(message.author.id, pilotKeywords, targetMonth);
+
+  if (userShifts.length === 0) {
     await message.reply(
-      `ℹ️ Chưa có ca làm nào trong kỳ **${targetMonth}**.\n` +
-      `Các tháng hiện có dữ liệu: \`${availableText}\``
+      `ℹ️ Bạn chưa có ca làm nào được ghi nhận trong **Tháng ${targetMonth}**.\n\n` +
+      `*(Nếu bạn vừa làm xong ca, hãy đảm bảo đã gửi lệnh \`!end\` kèm 3 ảnh để bot lưu ca nhé!)*`
     );
     return;
   }
 
-  // Group by pilot
-  const pilotMap = new Map<
-    string,
-    { shifts: number; hours: number; ap: number; honor: number }
-  >();
+  // Increment usage count for today
+  const currentCount = salaryRateLimiter.incrementSalaryCheck(message.author.id);
+  const remainingToday = Math.max(0, 2 - currentCount);
 
-  for (const s of shifts) {
-    if (!pilotMap.has(s.pilotName)) {
-      pilotMap.set(s.pilotName, { shifts: 0, hours: 0, ap: 0, honor: 0 });
-    }
-    const item = pilotMap.get(s.pilotName)!;
-    item.shifts++;
-    item.hours += s.hoursFloat;
-    item.ap += s.apSpent;
-    item.honor += s.honorGained;
-  }
+  const pilotName = userShifts[0].pilotName || message.member?.displayName || message.author.username;
+  const totalHours = Math.round(userShifts.reduce((acc, s) => acc + s.hoursFloat, 0) * 10) / 10;
+  const totalHonor = userShifts.reduce((acc, s) => acc + s.honorGained, 0);
+  const totalAP = userShifts.reduce((acc, s) => acc + s.apSpent, 0);
+  const totalMonsters = userShifts.reduce((acc, s) => acc + s.monstersKilled, 0);
 
-  const lines = Array.from(pilotMap.entries()).map(([pilot, data], idx) => {
-    const hoursFormatted = Math.round(data.hours * 10) / 10;
-    return `${idx + 1}. **${pilot}**: \`${hoursFormatted}h\` làm việc (${data.shifts} ca) · AP: \`${data.ap.toLocaleString('en-US')}\` · Danh dự: \`${data.honor.toLocaleString('en-US')}\``;
-  });
-
-  const totalHours = Math.round(shifts.reduce((acc, s) => acc + s.hoursFloat, 0) * 10) / 10;
+  const recentShiftsText = userShifts
+    .slice(-5)
+    .reverse()
+    .map(
+      (s, i) =>
+        `${i + 1}. **${s.dateStr}** - Acc: \`${s.accountName}\` | \`${s.hoursStr}h\` | Hạng **${s.efficiencyGrade}** (${s.efficiencyRate}%) | Danh dự: +${s.honorGained.toLocaleString('en-US')}`
+    )
+    .join('\n');
 
   const embed = new EmbedBuilder()
-    .setTitle(`💰 TỔNG HỢP CÔNG PILOT - THÁNG ${targetMonth}`)
-    .setColor(0x06b6d4)
-    .setDescription(lines.join('\n\n'))
-    .addFields(
-      { name: '👥 Nhân Viên', value: `${pilotMap.size} người`, inline: true },
-      { name: '📋 Tổng Ca Làm', value: `${shifts.length} ca`, inline: true },
-      { name: '⏳ Tổng Giờ Toàn Đội', value: `${totalHours} giờ`, inline: true }
+    .setTitle(`💼 BẢNG CÔNG CÁ NHÂN - THÁNG ${targetMonth}`)
+    .setColor(0x10b981)
+    .setDescription(
+      `Thông tin công và hiệu suất làm việc của Pilot: **${pilotName}**\n` +
+      `🔒 *Dữ liệu này chỉ hiển thị riêng cho bạn.*`
     )
-    .setFooter({ text: 'Gõ !excel để tải file Excel chi tiết có công thức tính lương tự động' })
+    .addFields(
+      { name: '📋 Tổng Ca Làm', value: `**${userShifts.length}** ca`, inline: true },
+      { name: '⏳ Tổng Giờ Làm', value: `**${totalHours}** giờ`, inline: true },
+      { name: '🎖️ Tổng Danh Dự', value: `**${totalHonor.toLocaleString('en-US')}**`, inline: true },
+      { name: '🧪 Tổng AP Tiêu Hao', value: `**${totalAP.toLocaleString('en-US')}** AP`, inline: true },
+      { name: '👾 Tổng Quái Diệt', value: `**${totalMonsters.toLocaleString('en-US')}**`, inline: true },
+      { name: '📊 Lượt Tra Cứu Hôm Nay', value: `**${currentCount} / 2** lần *(Còn ${remainingToday} lần)*`, inline: true },
+      { name: '📝 5 Ca Làm Gần Nhất', value: recentShiftsText || 'Chưa có chi tiết ca.', inline: false }
+    )
+    .setFooter({ text: 'Bảo mật cá nhân · Tối đa 2 lần tra cứu/ngày · Reset lúc 00:00' })
     .setTimestamp();
 
   await message.reply({ embeds: [embed] });
@@ -498,7 +652,7 @@ async function handleStatus(message: Message) {
   await message.reply({ embeds: [embed] });
 }
 
-// ── 4. Handle !cancel ────────────────────────────────────────────────────────
+// ── 6. Handle !cancel ────────────────────────────────────────────────────────
 
 async function handleCancel(message: Message) {
   const cancelled = shiftManager.cancelShift(message.author.id);
@@ -509,28 +663,63 @@ async function handleCancel(message: Message) {
   }
 }
 
-// ── 5. Handle !help ──────────────────────────────────────────────────────────
+// ── 7. Handle !help / !huongdan ──────────────────────────────────────────────
 
 async function handleHelp(message: Message) {
   const embed = new EmbedBuilder()
-    .setTitle('📖 HƯỚNG DẪN SỬ DỤNG BOT LÀM REPORT DISCORD')
-    .setColor(0x5865f2)
+    .setTitle('📖 HƯỚNG DẪN SỬ DỤNG BOT LÀM REPORT (DÀNH CHO NGƯỜI MỚI)')
+    .setColor(0x3b82f6)
     .setDescription(
-      `Bot tự động tính toán giờ làm (UTC+7 / ROK Game Time), quét điểm Danh Dự, bình AP, tăng tốc, xuất báo cáo và lưu bảng tính lương Excel (.xlsx).\n\n` +
-      `**CÁC LỆNH CHÍNH:**\n` +
-      `• \`!start [ghi chú]\` + đính kèm 3 ảnh: Bắt đầu ca làm việc.\n` +
-      `• \`!end [ghi chú]\` + đính kèm 3 ảnh: Kết thúc ca làm ➜ Tự động xuất báo cáo & file Excel.\n` +
-      `• \`!excel [tháng]\`: Tải file Excel chi tiết ca làm & bảng tính lương (Ví dụ: \`!excel 10/2026\` hoặc \`!excel all\`).\n` +
-      `• \`!luong [tháng]\`: Xem nhanh tổng hợp số giờ làm và ca làm của từng nhân viên.\n` +
-      `• \`!status\`: Xem tiến độ ca làm hiện tại và số giờ đã trôi qua.\n` +
-      `• \`!cancel\`: Hủy ca làm hiện tại.\n` +
-      `• \`!help\`: Xem hướng dẫn này.\n\n` +
-      `**3 ẢNH BẮT BUỘC ĐÍNH KÈM:**\n` +
-      `1. 🎖️ Bảng Danh Dự (Honor Board)\n` +
-      `2. 🧪 Kho Bình AP (AP Potions)\n` +
-      `3. ⚡ Kho Tăng Tốc (Speedups)`
+      `Chào mừng bạn đến với hệ thống hỗ trợ Pilot Rise of Kingdoms!\n` +
+      `Bot AI tự động nhận diện ảnh chụp màn hình, tính giờ làm, quét AP/Danh dự/Tăng tốc, và ghi nhận bảng lương.\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
     )
-    .setFooter({ text: 'AP Efficiency Analyzer · ROK Pilot Bot' });
+    .addFields(
+      {
+        name: '🎯 QUY TRÌNH 4 BƯỚC CHO PILOT (NGƯỜI LÀM)',
+        value:
+          `**1️⃣ Bắt Đầu Ca:**\n` +
+          `• Gõ lệnh: \`!start [ghi chú]\` kèm **3 ảnh đầu ca** (Ví dụ: \`!start 5 marches cày pháo đài\`).\n\n` +
+          `**2️⃣ Trong Khi Đang Làm:**\n` +
+          `• \`!status\` : Kiểm tra ca làm hiện tại, xem đã chạy được mấy tiếng.\n` +
+          `• \`!cancel\` : Hủy ca làm nếu lỡ ấn nhầm.\n\n` +
+          `**3️⃣ Kết Thúc Ca:**\n` +
+          `• Gõ lệnh: \`!end [ghi chú]\` kèm **3 ảnh cuối ca** (Ví dụ: \`!end xong ca 5h\`).\n` +
+          `• Bot sẽ tính toán đầy đủ: giờ làm VN & ROK, AP tiêu thụ, quái diệt, hiệu suất %, xếp loại SS/S/A/B, tăng tốc và lưu vào hệ thống chấm công.\n\n` +
+          `**4️⃣ Tra Cứu Công Của Mình:**\n` +
+          `• \`!salary\` hoặc \`!luong\` : Xem tổng số ca và tổng số giờ làm của **BẢN THÂN** trong tháng.\n` +
+          `• ⚠️ *Lưu ý:* Mỗi Pilot được tra cứu tối đa **2 lần / ngày** (reset lúc 00:00).`,
+        inline: false,
+      },
+      {
+        name: '📸 3 ẢNH BẮT BUỘC ĐÍNH KÈM (ĐẦU CA & CUỐI CA)',
+        value:
+          `Mỗi lần \`!start\` hoặc \`!end\`, BẮT BUỘC đính kèm đủ **3 ảnh** chụp trong game:\n` +
+          `1. 🎖️ **Bảng Điểm Danh Dự (Honor Board)** - Hiển thị tên tài khoản & số điểm.\n` +
+          `2. 🧪 **Kho Bình AP trong Túi Đồ** - Các bình AP 50, 100, 500, 1000.\n` +
+          `3. ⚡ **Kho Tăng Tốc trong Túi Đồ** - Tăng tốc Chung, Luyện lính, Chữa lính.`,
+        inline: false,
+      },
+      {
+        name: '👑 LỆNH DÀNH RIÊNG CHO BOSS / QUẢN TRỊ VIÊN',
+        value:
+          `• \`!excel [tháng]\` : Xuất file Excel (.xlsx) đầy đủ tất cả nhân viên + bảng tự động tính tiền lương.\n` +
+          `  *(Ví dụ: \`!excel\` hoặc \`!excel 10/2026\` hoặc \`!excel all\`)*\n` +
+          `• \`!salary all [tháng]\` : Xem tổng hợp bảng công của toàn bộ đội ngũ.\n` +
+          `• \`!salary @pilot [tháng]\` : Xem chi tiết ca làm của một nhân viên bất kỳ.`,
+        inline: false,
+      },
+      {
+        name: '💡 MẸO & LƯU Ý ĐỂ TRÁNH LỖI',
+        value:
+          `• Chụp ảnh màn hình rõ ràng, không bị che số AP hoặc điểm danh dự.\n` +
+          `• Đính kèm đủ cả 3 ảnh trong 1 tin nhắn cùng với lệnh \`!start\` hoặc \`!end\`.\n` +
+          `• Gõ \`!huongdan\` hoặc \`!help\` bất kỳ lúc nào để xem lại bảng hướng dẫn này.`,
+        inline: false,
+      }
+    )
+    .setFooter({ text: 'AP Efficiency Analyzer · ROK Pilot Bot' })
+    .setTimestamp();
 
   await message.reply({ embeds: [embed] });
 }
