@@ -75,7 +75,7 @@ export function calculateShiftHours(startTime: number, endTime: number): {
   const totalMinutes = Math.round(totalMs / 60000);
   const hoursFloat = totalMinutes / 60;
   let rounded = Math.round(hoursFloat * 10) / 10;
-  if (totalMinutes > 0 && rounded === 0) {
+  if (rounded === 0) {
     rounded = 0.1;
   }
   const hoursStr = rounded.toString().replace('.', ',');

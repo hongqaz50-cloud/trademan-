@@ -124,7 +124,7 @@ export async function generateMonthlyExcelReport(
       s.honorGained,
       s.apSpent,
       s.monstersKilled,
-      s.efficiencyRate / 100,
+      Math.round(s.efficiencyRate * 10) / 1000,
       s.efficiencyGrade,
       s.universalSpeed,
       s.trainingSpeed,
@@ -358,7 +358,7 @@ export async function generateMonthlyExcelReport(
       { formula: `=D${currentRow2}*E${currentRow2}` }, // Salary Formula: Hours * Rate
       p.totalAP,
       p.totalHonor,
-      avgEff / 100,
+      Math.round(avgEff * 10) / 1000,
       evaluation,
     ];
     row.height = 24;
