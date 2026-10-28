@@ -131,27 +131,34 @@ export function isBoss(message: Message): boolean {
     return true;
   }
 
-  // 3. Direct Messages (DM) — if not in stored or env list, not boss
+  // 3. BOOTSTRAP: If NO boss has been registered yet, allow the initial setup!
+  if (roleManager.getBossList().length === 0 && envBossIds.length === 0) {
+    return true;
+  }
+
+  // 4. Direct Messages (DM) — if not in stored or env list, not boss
   if (!message.guild || !message.member) {
     return false;
   }
 
-  // 4. Server Owner (Chủ server Discord)
+  // 5. Server Owner (Chủ server Discord)
   if (message.guild.ownerId === authorId) {
     return true;
   }
 
-  // 5. Discord Administrator or Manage Guild permission
+  // 6. Discord Administrator or Management permissions
   if (
     message.member.permissions?.has(PermissionsBitField.Flags.Administrator) ||
-    message.member.permissions?.has(PermissionsBitField.Flags.ManageGuild)
+    message.member.permissions?.has(PermissionsBitField.Flags.ManageGuild) ||
+    message.member.permissions?.has(PermissionsBitField.Flags.ManageRoles) ||
+    message.member.permissions?.has(PermissionsBitField.Flags.ManageChannels)
   ) {
     return true;
   }
 
-  // 6. Discord Role check (Boss, Admin, Quản Lý, Manager, Chủ, Owner)
+  // 7. Discord Role check (Boss, Admin, Quản Lý, Manager, Chủ, Owner, Leader, Mod)
   if (message.member.roles?.cache) {
-    const bossKeywords = ['boss', 'admin', 'quản lý', 'quan ly', 'manager', 'owner', 'chủ'];
+    const bossKeywords = ['boss', 'admin', 'quản lý', 'quan ly', 'manager', 'owner', 'chủ', 'leader', 'mod'];
     const hasBossRole = message.member.roles.cache.some((role) => {
       const lower = role.name.toLowerCase();
       return bossKeywords.some((kw) => lower.includes(kw));

@@ -764,13 +764,8 @@ async function handleSetBoss(message: Message) {
     return;
   }
 
-  const targetUser = message.mentions.users.first();
-  const targetMember = message.mentions.members?.first();
-
-  if (!targetUser) {
-    await message.reply('⚠️ Cú pháp: `!setboss @user` (Hãy tag/mention người bạn muốn phong làm Boss).');
-    return;
-  }
+  const targetUser = message.mentions.users.first() || message.author;
+  const targetMember = message.mentions.members?.first() || message.member;
 
   roleManager.addBoss(targetUser.id);
 
@@ -850,13 +845,8 @@ async function handleSetPilot(message: Message) {
     return;
   }
 
-  const targetUser = message.mentions.users.first();
-  const targetMember = message.mentions.members?.first();
-
-  if (!targetUser) {
-    await message.reply('⚠️ Cú pháp: `!setpilot @user` (Hãy tag người bạn muốn gắn vai trò Pilot).');
-    return;
-  }
+  const targetUser = message.mentions.users.first() || message.author;
+  const targetMember = message.mentions.members?.first() || message.member;
 
   roleManager.addPilot(targetUser.id);
 
