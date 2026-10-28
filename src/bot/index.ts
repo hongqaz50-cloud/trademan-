@@ -179,6 +179,8 @@ async function handleStart(message: Message) {
 
     const now = Date.now();
     const shift: ActiveShift = {
+      guildId: message.guild?.id,
+      guildName: message.guild?.name,
       userId: message.author.id,
       pilotName,
       accountName: scan.accountName,
@@ -296,6 +298,8 @@ async function handleEnd(message: Message) {
     // Save to completed shifts history
     const completedShift: CompletedShift = {
       id: `shift_${endTime}_${message.author.id}`,
+      guildId: message.guild?.id || shift.guildId,
+      guildName: message.guild?.name || shift.guildName,
       userId: message.author.id,
       pilotName: reportData.pilotName,
       accountName: reportData.accountName,
@@ -367,7 +371,8 @@ async function handleExcel(message: Message) {
   const statusMsg = await message.reply('⏳ **Đang tổng hợp dữ liệu ca làm và xuất file Excel...**');
 
   try {
-    const shifts = shiftManager.getCompletedShifts(targetMonth);
+    const guildId = message.guild?.id;
+    const shifts = shiftManager.getCompletedShifts(targetMonth, guildId);
 
     if (shifts.length === 0) {
       const available = shiftManager.getAvailableMonths();
@@ -461,9 +466,11 @@ async function handleLuong(message: Message) {
     targetUserOrName = mentionedUser.id;
   }
 
+  const guildId = message.guild?.id;
+
   // ── CASE 1: BOSS VIEWING ALL PILOTS ──
   if (isUserBoss && (showAll || (!targetUserOrName && !tokens.some((t) => t.toLowerCase() === 'me')))) {
-    const shifts = shiftManager.getCompletedShifts(targetMonth);
+    const shifts = shiftManager.getCompletedShifts(targetMonth, guildId);
     if (shifts.length === 0) {
       const available = shiftManager.getAvailableMonths();
       const availableText = available.length > 0 ? available.join(', ') : 'Chưa có tháng nào';
@@ -522,7 +529,8 @@ async function handleLuong(message: Message) {
     const shifts = shiftManager.getPilotShifts(
       mentionedUser ? mentionedUser.id : targetUserOrName,
       pilotKeywords,
-      targetMonth
+      targetMonth,
+      guildId
     );
 
     if (shifts.length === 0) {
@@ -593,7 +601,7 @@ async function handleLuong(message: Message) {
     message.author.username,
   ].filter(Boolean);
 
-  const userShifts = shiftManager.getPilotShifts(message.author.id, pilotKeywords, targetMonth);
+  const userShifts = shiftManager.getPilotShifts(message.author.id, pilotKeywords, targetMonth, guildId);
 
   if (userShifts.length === 0) {
     await message.reply(

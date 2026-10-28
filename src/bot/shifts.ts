@@ -4,8 +4,15 @@
 
 import fs from 'fs';
 import path from 'path';
+import {
+  saveCompletedShiftToSupabase,
+  saveActiveShiftToSupabase,
+  deleteActiveShiftFromSupabase,
+} from './supabase';
 
 export interface ActiveShift {
+  guildId?: string;
+  guildName?: string;
   userId: string;
   pilotName: string;
   accountName: string;
@@ -24,6 +31,8 @@ export interface ActiveShift {
 
 export interface CompletedShift {
   id: string;
+  guildId?: string;
+  guildName?: string;
   userId: string;
   pilotName: string;
   accountName: string;
@@ -114,6 +123,7 @@ class ShiftManager {
   public startShift(shift: ActiveShift): void {
     this.activeShifts.set(shift.userId, shift);
     this.saveActiveToDisk();
+    saveActiveShiftToSupabase(shift).catch(() => {});
   }
 
   public getShift(userId: string): ActiveShift | undefined {
@@ -125,6 +135,7 @@ class ShiftManager {
     if (shift) {
       this.activeShifts.delete(userId);
       this.saveActiveToDisk();
+      deleteActiveShiftFromSupabase(userId).catch(() => {});
     }
     return shift;
   }
@@ -133,6 +144,7 @@ class ShiftManager {
     const existed = this.activeShifts.delete(userId);
     if (existed) {
       this.saveActiveToDisk();
+      deleteActiveShiftFromSupabase(userId).catch(() => {});
     }
     return existed;
   }
@@ -142,14 +154,20 @@ class ShiftManager {
   public saveCompletedShift(shift: CompletedShift): void {
     this.history.push(shift);
     this.saveHistoryToDisk();
+    saveCompletedShiftToSupabase(shift).catch(() => {});
   }
 
-  public getCompletedShifts(filterMonth?: string): CompletedShift[] {
+  public getCompletedShifts(filterMonth?: string, guildId?: string): CompletedShift[] {
+    let list = this.history;
+    if (guildId) {
+      list = list.filter((s) => !s.guildId || s.guildId === guildId);
+    }
+
     if (!filterMonth || filterMonth.trim().toLowerCase() === 'all') {
-      return [...this.history];
+      return [...list];
     }
     const target = filterMonth.trim();
-    return this.history.filter((s) => {
+    return list.filter((s) => {
       // Matches "10/2026", "10", or "10/26"
       if (s.monthStr === target) return true;
       if (s.monthStr.startsWith(target + '/')) return true;
@@ -162,9 +180,10 @@ class ShiftManager {
   public getPilotShifts(
     userId: string,
     pilotKeywords: string[] = [],
-    filterMonth?: string
+    filterMonth?: string,
+    guildId?: string
   ): CompletedShift[] {
-    const monthShifts = this.getCompletedShifts(filterMonth);
+    const monthShifts = this.getCompletedShifts(filterMonth, guildId);
     const lowerKeywords = pilotKeywords
       .map((k) => k.trim().toLowerCase())
       .filter(Boolean);
